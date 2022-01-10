@@ -1,5 +1,4 @@
 using LinearAlgebra
-using SparseArrays
 
 import SuperPolyak
 
