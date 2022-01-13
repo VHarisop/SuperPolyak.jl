@@ -145,10 +145,12 @@ function build_bundle_lsqr(
   η::Float64,
   min_f::Float64,
   η_est::Float64,
+  bundle_budget::Int = length(y₀),
 )
   d = length(y₀)
-  fvals = zeros(d)
-  resid = zeros(d)
+  bundle_budget = min(bundle_budget, d)
+  fvals = zeros(bundle_budget)
+  resid = zeros(bundle_budget)
   # Resizable bundle matrix. Each column is a bundle element.
   bmtrx = ElasticMatrix(zeros(d, 0))
   y = y₀[:]
@@ -166,7 +168,7 @@ function build_bundle_lsqr(
   f_best = resid[1]
   # Difference dy for the normal equations.
   dy = y - y₀
-  for bundle_idx in 2:d
+  for bundle_idx in 2:bundle_budget
     append!(bmtrx, gradf(y))
     # Invariant: resid[bundle_idx - 1] = f(y) - min_f.
     fvals[bundle_idx] = resid[bundle_idx-1] + bmtrx[:, bundle_idx]' * (y₀ - y)
@@ -197,11 +199,12 @@ function build_bundle_lsqr(
       f_best = resid[bundle_idx]
     end
   end
-  return y_best, d
+  return y_best, bundle_budget
 end
 
 """
-  build_bundle_wv(f::Function, gradf::Function, y₀::Vector{Float64}, η::Float64, min_f::Float64, η_est::Float64)
+  build_bundle_wv(f::Function, gradf::Function, y₀::Vector{Float64}, η::Float64,
+                  min_f::Float64, η_est::Float64, bundle_budget::Int = length(y₀))
 
 An efficient version of the BuildBundle algorithm using an incrementally updated
 QR algorithm based on the compact WV representation.
@@ -213,11 +216,13 @@ function build_bundle_wv(
   η::Float64,
   min_f::Float64,
   η_est::Float64,
+  bundle_budget::Int = length(y₀),
 )
   d = length(y₀)
+  bundle_budget = min(bundle_budget, d)
   bvect = zeros(d)
-  fvals = zeros(d)
-  resid = zeros(d)
+  fvals = zeros(bundle_budget)
+  resid = zeros(bundle_budget)
   y = y₀[:]
   # To obtain a solution equivalent to applying the pseudoinverse, we use the
   # QR factorization of the transpose of the bundle matrix. This is because the
@@ -239,7 +244,7 @@ function build_bundle_wv(
   f_best = resid[1]
   # Cache right-hand side vector.
   qr_rhs = zero(y)
-  for bundle_idx in 2:d
+  for bundle_idx in 2:bundle_budget
     copyto!(bvect, gradf(y))
     # Invariant: resid[bundle_idx - 1] = f(y) - min_f.
     fvals[bundle_idx] = resid[bundle_idx-1] + bvect' * (y₀ - y)
@@ -274,7 +279,7 @@ function build_bundle_wv(
       f_best = resid[bundle_idx]
     end
   end
-  return y_best, d
+  return y_best, bundle_budget
 end
 
 """
@@ -290,11 +295,13 @@ function build_bundle_qr(
   η::Float64,
   min_f::Float64,
   η_est::Float64,
+  bundle_budget::Int = length(y₀),
 )
   d = length(y₀)
+  bundle_budget = min(bundle_budget, d)
   bvect = zeros(d)
-  fvals = zeros(d)
-  resid = zeros(d)
+  fvals = zeros(bundle_budget)
+  resid = zeros(bundle_budget)
   y = y₀[:]
   # To obtain a solution equivalent to applying the pseudoinverse, we use the
   # QR factorization of the transpose of the bundle matrix. This is because the
@@ -316,7 +323,7 @@ function build_bundle_qr(
   y_best = y[:]
   f_best = resid[1]
   @debug "bundle_idx = 1 - error: $(resid[1])"
-  for bundle_idx in 2:d
+  for bundle_idx in 2:bundle_budget
     copyto!(bvect, gradf(y))
     fvals[bundle_idx] = f(y) - min_f + bvect' * (y₀ - y)
     # qrinsert!(Q, R, v): QR = Aᵀ and v is the column added.
@@ -353,7 +360,7 @@ function build_bundle_qr(
     end
     @debug "bundle_idx = $(bundle_idx) - error: $(resid[bundle_idx])"
   end
-  return y_best, d
+  return y_best, bundle_budget
 end
 
 """
@@ -428,6 +435,7 @@ function superpolyak(
   bundle_system_solver::BundleSystemSolver = LSQR(),
   η_est::Float64 = 1.0,
   η_lb::Float64 = 0.1,
+  bundle_budget::Int = length(x₀),
   kwargs...,
 )
   if (ϵ_decrease ≥ 1) || (ϵ_decrease < 0)
@@ -456,7 +464,7 @@ function superpolyak(
     η = ϵ_distance^(idx)
     target_tol = max(ϵ_decrease * Δ, ϵ_tol)
     bundle_stats = @timed bundle_step, bundle_calls =
-      bundle_solver(f, gradf, x, η, min_f, η_est)
+      bundle_solver(f, gradf, x, η, min_f, η_est, bundle_budget)
     cumul_time += bundle_stats.time - bundle_stats.gctime
     # Adjust η_est if the bundle step did not satisfy the descent condition.
     if !isnothing(bundle_step) &&

@@ -122,3 +122,16 @@ function generate_conditioned_matrix(d::Int, r::Int, κ::Float64)
   Σ = Diagonal(range(1, κ, length = r))
   return (X * Σ) / norm(Σ)
 end
+
+"""
+  filename_noext(name::String)
+
+Extract the filename without any extension given a path `name`.
+"""
+function filename_noext(name::String)
+  (n, e) = splitext(basename(name))
+  while !isempty(e)
+    (n, e) = splitext(n)
+  end
+  return n
+end
