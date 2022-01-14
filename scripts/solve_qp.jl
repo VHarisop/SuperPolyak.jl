@@ -18,7 +18,6 @@ function run_experiment(
   ϵ_rel,
   η_est,
   η_lb,
-  bundle_system_solver,
   bundle_budget,
   oracle_calls_limit,
   no_amortized,
@@ -51,7 +50,7 @@ function run_experiment(
     bundle_budget = bundle_budget,
   )
   df_bundle = save_superpolyak_result(
-    "qp_bundle.csv",
+    "qp_$(filename_noext(filename)).csv",
     result,
     no_amortized,
   )
@@ -90,7 +89,6 @@ run_experiment(
   args["eps-rel"],
   args["eta-est"],
   args["eta-lb"],
-  args["bundle-system-solver"],
   args["bundle-budget"],
   args["oracle-calls-limit"],
   args["no-amortized"],

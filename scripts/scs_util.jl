@@ -55,6 +55,7 @@ struct ScsResult
   iter::Int
   solve_time::Float64
   scale::Float64
+  status::String
 end
 
 """
@@ -106,12 +107,13 @@ function solve_with_scs(
     scale = initial_scale,
     max_iters = max(iteration_limit, 1),
   )
-  # Convert time elapsed from milliseconds to seconds.
+  solve_status = (result.info.status_val in [1; 2]) ? "SOLVED" : "UNSOLVED"
   return ScsResult(
     [result.x; result.y; result.s],
     result.info.iter,
     1e-3 * result.info.solve_time,
     result.info.scale,
+    solve_status,
   )
 end
 
@@ -122,24 +124,17 @@ Project `(s, y)` to the cone `K × K*` specified by a `QuadraticProgram`.
 """
 function proj_cone!(
   qp::QuadraticProgram,
-  y::Vector{Float64},
-  s::Vector{Float64},
+  z::Vector{Float64},
 )
+  m, n = size(qp.A)
   num_eq = qp.num_equalities
+  y_ne = view(z, (n+num_eq+1):(n+m))
+  s = view(z, (n+m+1):(n+2m))
   # s should be 0 on 1:(num_eq)
   s[1:num_eq] .= 0.0
-  # s and y should be nonnegative on (num_eq+1):m and
-  # s_i y_i should be 0 everywhere.
-  # If s_i and y_i > 0, we set the smallest one to 0
-  # to project to set (s, y): s_i y_i = 0.
-  # NOTE: both_positive is contained in [(num_eq+1):m].
-  both_positive = (s .> 0) .& (y .> 0)
+  # s and y should be nonnegative on (num_eq+1):m
   s[s .< 0] .= 0.0
-  y[y .< 0] .= 0.0
-  s_minimizer = (s .< y) .& both_positive
-  y_minimizer = (y .< s) .& both_positive
-  s[s_minimizer] .= 0.0
-  y[y_minimizer] .= 0.0
+  y_ne[y_ne .< 0] .= 0.0
 end
 
 """
@@ -153,24 +148,25 @@ function kkt_error(qp::QuadraticProgram)
   c = qp.c
   P = qp.P
   m, n = size(A)
+  k = qp.num_equalities
   # Range of linear inequalities.
-  ineq_range = (qp.num_equalities+1):m
+  ineq_range = (k+1):m
+  A_eq = A[1:k, :]
+  A_ne = A[ineq_range, :]
+  b_eq = b[1:k]
+  b_ne = b[ineq_range]
   loss_fn(z::AbstractVector) = begin
     x = z[1:n]
-    y = z[(n+1):(n+m)]
-    s = z[(n+m+1):end]
+    y_eq = z[(n+1):(n+k)]
+    y_ne = max.(z[(n+k+1):(n+m)], 0.0)
+    s_ne = max.(z[(n+m+k+1):end], 0.0)
     Px = P * x
     return max(
-      norm(A * x + s - b, Inf),
-      norm(Px + A'y + c, Inf),
-      abs(x' * Px + c'x + b'y),
-      # s in K
-      norm(min.(s[ineq_range], 0.0), Inf),
-      norm(s[1:qp.num_equalities], Inf),
-      # y in K∗
-      norm(min.(y[ineq_range], 0.0), Inf),
-      # s \perp y
-      norm(s .* y, Inf),
+      norm(A_eq * x - b_eq, Inf),
+      norm(A_ne * x + s_ne - b_ne, Inf),
+      norm(Px + A_ne'y_ne + A_eq'y_eq + c, Inf),
+      abs(x' * Px + c'x + b_eq'y_eq + b_ne'y_ne),
+      norm(s_ne .* y_ne, Inf),
     )
   end
   return loss_fn
@@ -238,6 +234,7 @@ function superpolyak_with_scs(
     if isnothing(bundle_step) || (bundle_loss > target_tol)
       if (!isnothing(bundle_step)) && (bundle_loss < Δ)
         copyto!(x, bundle_step)
+        proj_cone!(qp, x)
       end
       @info "Bundle step failed (k=$(idx), f=$(bundle_loss)) -- using fallback algorithm"
       fallback_stats = @timed scs_result =
