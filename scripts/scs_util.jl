@@ -29,22 +29,24 @@ function read_problem_from_qps_file(filename::String, mpsformat)
   P = sparse(problem.qrows, problem.qcols, problem.qvals, n, n)
   P = P + tril(P, 1)'
   A = sparse(problem.arows, problem.acols, problem.avals, m, n)
-  # Constraints on variables should be included in the constraint matrix.
-  finite_ind = @. (1:n)[!isinf(problem.lvar)|!isinf(problem.uvar)]
-  @assert norm(problem.ucon - problem.lcon, Inf) ≤ 1e-15 "Expected equality constraints only"
-  # Augmented matrix in the system s - Ax in K.
-  A_var = [-sparse(1.0I, n, n); sparse(1.0I, n, n)]
-  b_var = [-problem.lvar; problem.uvar]
+  ℓ = problem.lcon
+  u = problem.ucon
+  # Indices where Ax = b and ℓ ≤ Ax ≤ u.
+  eq_bounds = abs.(u .- ℓ) .≤ 1e-15
+  ne_bounds = abs.(u .- ℓ) .> 1e-15
+  # Augmented matrix
+  A_lb = [-A[ne_bounds, :]; A[ne_bounds, :]; -sparse(1.0I, n, n); sparse(1.0I, n, n)]
+  b_lb = [-ℓ[ne_bounds]; u[ne_bounds]; -problem.lvar; problem.uvar]
   # Only include nontrivial variable bounds (SCS will yield nan's otherwise).
-  finite_ind = isfinite.(b_var)
-  A_aug = [A; A_var[finite_ind, :]]
-  b_aug = [problem.ucon; b_var[finite_ind]]
+  finite_ind = isfinite.(b_lb)
+  A_aug = [A[eq_bounds, :]; A_lb[finite_ind, :]]
+  b_aug = [u[eq_bounds]; b_lb[finite_ind]]
   return QuadraticProgram(
     A_aug,
     copy(P),
     b_aug,
     problem.c,
-    m,
+    sum(eq_bounds),     # num_equalities
   )
 end
 
@@ -100,6 +102,7 @@ function solve_with_scs(
     warm_start = true,
     eps_abs = ϵ_tol,
     eps_rel = ϵ_rel,
+    eps_infeas = 1e-100,
     scale = initial_scale,
     max_iters = max(iteration_limit, 1),
   )
