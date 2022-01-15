@@ -56,6 +56,7 @@ struct ScsResult
   solve_time::Float64
   scale::Float64
   status::String
+  status_val::Int
 end
 
 """
@@ -114,6 +115,7 @@ function solve_with_scs(
     1e-3 * result.info.solve_time,
     result.info.scale,
     solve_status,
+    result.info.status_val,
   )
 end
 
