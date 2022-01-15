@@ -220,6 +220,9 @@ function build_bundle_wv(
 )
   d = length(y₀)
   bundle_budget = min(bundle_budget, d)
+  if bundle_budget ≤ 0
+    return y₀, 0
+  end
   bvect = zeros(d)
   fvals = zeros(bundle_budget)
   resid = zeros(bundle_budget)
