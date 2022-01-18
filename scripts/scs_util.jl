@@ -337,6 +337,14 @@ function fallback_algorithm(
       )
     end
   end
+  return ScsResult(
+    z_prev,
+    iter_total,
+    time_total,
+    scale,
+    "UNSOLVED",
+    2,
+  )
 end
 
 """

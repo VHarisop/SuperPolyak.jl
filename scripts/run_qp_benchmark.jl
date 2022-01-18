@@ -14,9 +14,11 @@ include("scs_util.jl")
 struct SolveStat
   instance_name::String
   scs_solve_time::Float64
+  scs_iter::Int
+  scs_loss::Float64
   superpolyak_solve_time::Float64
-  scs_iter::Float64
-  superpolyak_iter::Float64
+  superpolyak_iter::Int
+  superpolyak_loss::Float64
 end
 
 function run_benchmark(
@@ -30,6 +32,7 @@ function run_benchmark(
   η_lb::Float64,
   bundle_budget::Int,
   oracle_calls_limit::Int,
+  exit_frequency::Int,
   no_amortized::Bool,
 )
   solve_stats = Vector{SolveStat}([])
@@ -47,6 +50,7 @@ function run_benchmark(
       η_lb,
       bundle_budget,
       oracle_calls_limit,
+      exit_frequency,
       no_amortized,
     )
     # Only store statistics if instance was not infeasible.
@@ -68,38 +72,40 @@ function run_experiment(
   η_lb,
   bundle_budget,
   oracle_calls_limit,
+  exit_frequency,
   no_amortized,
 )
   instance_name = filename_noext(filename)
   problem = read_problem_from_qps_file(filename, :fixed)
+  loss = forward_backward_error(problem)
   m, n = size(problem.A)
-  z_init = zeros(2m + n)
   @info "Running SCS..."
-  scs_result = solve_with_scs(
+  scs_result = fallback_algorithm(
     problem,
     zeros(n),
     zeros(m),
-    zeros(m),
-    ϵ_tol = ϵ_tol,
-    ϵ_rel = ϵ_rel,
-    use_direct_solver = true,
-    iteration_limit = oracle_calls_limit,
+    exit_frequency,
+    oracle_calls_limit,
+    ϵ_tol,
+    ϵ_rel,
+    0.1,
   )
   # Stop and return nothing if problem is infeasible.
-  if (scs_result.status == "UNSOLVED")
+  if !(scs_result.status_val in [1; 2])
     @info "Instance $(instance_name) infeasible -- terminating"
     return nothing
   end
   @info "Running SuperPolyak..."
   result = superpolyak_with_scs(
     problem,
-    z_init,
+    zeros(m + n),
     ϵ_decrease = ϵ_decrease,
     ϵ_distance = ϵ_distance,
     ϵ_tol = ϵ_tol,
     ϵ_rel = ϵ_rel,
     η_est = η_est,
     η_lb = η_lb,
+    exit_frequency = exit_frequency,
     oracle_calls_limit = oracle_calls_limit,
     bundle_budget = bundle_budget,
   )
@@ -111,9 +117,11 @@ function run_experiment(
   return SolveStat(
     filename_noext(filename),
     scs_result.solve_time,
-    df_bundle.cumul_elapsed_time[end],
     scs_result.iter,
+    loss(scs_result.sol[1:(n + m)]),
+    df_bundle.cumul_elapsed_time[end],
     df_bundle.cumul_oracle_calls[end],
+    df_bundle.fvals[end],
   )
 end
 
@@ -141,6 +149,10 @@ settings = add_base_options(settings)
   arg_type = Int
   help = "The total number of oracle calls allowed."
   default = 100000
+  "--exit-frequency"
+  arg_type = Int
+  help = "The exit frequency of calls to SCS."
+  default = 250
 end
 
 args = parse_args(settings)
@@ -156,5 +168,6 @@ run_benchmark(
   args["eta-lb"],
   args["bundle-budget"],
   args["oracle-calls-limit"],
+  args["exit-frequency"],
   args["no-amortized"],
 )
