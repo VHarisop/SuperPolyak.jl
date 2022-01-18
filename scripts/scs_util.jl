@@ -13,15 +13,16 @@ struct QuadraticProgram
   P::AbstractMatrix{Float64}
   b::Vector{Float64}
   c::Vector{Float64}
+  num_equalities::Int
 end
 
 """
-  read_problem_from_qps_file(filename::String, mpsformat; no_eqs::Bool = true) -> QuadraticProgram
+  read_problem_from_qps_file(filename::String, mpsformat; no_eqs::Bool = false) -> QuadraticProgram
 
 Read a quadratic programming problem from a .QPS file and convert to the
 representation used by the SCS solver.
 """
-function read_problem_from_qps_file(filename::String, mpsformat; no_eqs::Bool = true)
+function read_problem_from_qps_file(filename::String, mpsformat; no_eqs::Bool = false)
   problem = readqps(filename, mpsformat=mpsformat)
   m, n = problem.ncon, problem.nvar
   # The objective matrix is symmetric and the .QPS file gives
@@ -32,16 +33,33 @@ function read_problem_from_qps_file(filename::String, mpsformat; no_eqs::Bool = 
   ℓ = problem.lcon
   u = problem.ucon
   # Ax + s = b; s ≥ 0.
-  A_aug = [-A; A; -sparse(1.0I, n, n); sparse(1.0I, n, n)]
-  b_aug = [-ℓ; u; -problem.lvar; problem.uvar]
-  # Only include nontrivial variable bounds (SCS will yield nan's otherwise).
-  finite_ind = isfinite.(b_aug)
-  return QuadraticProgram(
-    A_aug[finite_ind, :],
-    copy(P),
-    b_aug[finite_ind],
-    problem.c,
-  )
+  if no_eqs
+    A_aug = [-A; A; -sparse(1.0I, n, n); sparse(1.0I, n, n)]
+    b_aug = [-ℓ; u; -problem.lvar; problem.uvar]
+    # Only include nontrivial variable bounds (SCS will yield nan's otherwise).
+    finite_ind = isfinite.(b_aug)
+    return QuadraticProgram(
+      A_aug[finite_ind, :],
+      copy(P),
+      b_aug[finite_ind],
+      problem.c,
+      0,          # num_equalities
+    )
+  else
+    eq_ind = abs.(u - ℓ) .≤ 1e-15
+    ne_ind = abs.(u - ℓ) .> 1e-15
+    A_ne = [-A[ne_ind, :]; A[ne_ind, :]; -sparse(1.0I, n, n); sparse(1.0I, n, n)]
+    b_ne = [-ℓ[ne_ind]; u[ne_ind]; -problem.lvar; problem.uvar]
+    # Only include nontrivial upper and lower bounds (SCS will yield nan's otherwise).
+    finite_ind = isfinite.(b_ne)
+    return QuadraticProgram(
+      [A[eq_ind, :]; A_ne[finite_ind, :]],
+      copy(P),
+      [u[eq_ind]; b_ne[finite_ind]],
+      problem.c,
+      sum(eq_ind),  # num_equalities
+    )
+  end
 end
 
 struct ScsResult
@@ -75,6 +93,7 @@ function solve_with_scs(
   iteration_limit::Int = 100000,
 )
   m, n = size(qp.A)
+  k = qp.num_equalities
   result = scs_solve(
     use_direct_solver ? DirectSolver : IndirectSolver,
     m,
@@ -83,8 +102,8 @@ function solve_with_scs(
     triu(qp.P),
     qp.b,
     qp.c,
-    0,                # number of equalities
-    m,                # number of inequalities
+    k,                # number of equalities
+    m - k,            # number of inequalities
     zeros(0),
     zeros(0),
     zeros(Int, 0),
@@ -111,24 +130,6 @@ function solve_with_scs(
     solve_status,
     result.info.status_val,
   )
-end
-
-"""
-  proj_cone!(qp::QuadraticProgram, y::Vector{Float64}, s::Vector{Float64})
-
-Project `(s, y)` to the cone `K × K*` specified by a `QuadraticProgram`.
-"""
-function proj_cone!(
-  qp::QuadraticProgram,
-  z::Vector{Float64},
-)
-  m, n = size(qp.A)
-  y = view(z, (n+1):(n+m))
-  s = view(z, (n+m+1):(n+2m))
-  both_positive = (y .> 0) .& (s .> 0)
-  # s, y should be nonnegative and s_i y_i = 0.
-  s[s .< 0] .= 0.0
-  y[y .< 0] .= 0.0
 end
 
 """
@@ -168,16 +169,60 @@ function forward_backward_error(qp::QuadraticProgram)
   b = qp.b
   c = qp.c
   P = qp.P
-  n = size(A, 2)
+  k = qp.num_equalities
+  m, n = size(A)
+  eq_ind = 1:k
+  ne_ind = (k+1):m
   # Expect length(z) = n + m.
   loss_fn(z::AbstractVector) = begin
     x = z[1:n]
     y = z[(n+1):end]
+    Ax = A * x
     diff_x = c + P*x + A'y      # x - (x - (c + Qx + A'y))
-    diff_y = y - max.(0.0, y - (b - A * x))
-    return max(norm(diff_x, Inf), norm(diff_y, Inf))
+    diff_y_eq = b[eq_ind] - Ax[eq_ind]
+    diff_y_ne = y[ne_ind] - max.(0.0, y[ne_ind] - (b[ne_ind] - Ax[ne_ind]))
+    return sqrt(sum(diff_x.^2) + sum(diff_y_eq.^2) + sum(diff_y_ne.^2))
   end
   return loss_fn
+end
+
+fnorm(v::AbstractVector, v_norm::Float64) = begin
+  return v_norm ≤ 1e-15 ? zero(v) : v / v_norm
+end
+
+function forward_backward_error_subgradient_direct(qp::QuadraticProgram)
+  A = qp.A
+  b = qp.b
+  c = qp.c
+  P = qp.P
+  k = qp.num_equalities
+  m, n = size(A)
+  eq_ind = 1:k
+  ne_ind = (k+1):m
+  A_eq = A[eq_ind, :]
+  A_ne = A[ne_ind, :]
+  b_eq = b[eq_ind]
+  b_ne = b[ne_ind]
+  g = zeros(m + n)
+  grad_fn(z::AbstractVector) = begin
+    x = z[1:n]
+    y = z[(n+1):end]
+    Ax = A * x
+    pri_res = c + P * x + A'y
+    dua_res_eq = b_eq - Ax[eq_ind]
+    dua_res_ne = y[ne_ind] - max.(0.0, y[ne_ind] - (b_ne - Ax[ne_ind]))
+    norm_pri = norm(pri_res)
+    norm_dua_eq = norm(dua_res_eq)
+    norm_dua_ne = norm(dua_res_ne)
+    g[1:n] = P' * fnorm(pri_res, norm_pri) -
+      A_eq' * fnorm(dua_res_eq, norm_dua_eq) -
+      (A_ne' * Diagonal(y[ne_ind] - (b[ne_ind] - Ax[ne_ind]) .≥ 0)) * fnorm(dua_res_ne, norm_dua_ne)
+    g[(n+1):end] = A * fnorm(pri_res, norm_pri)
+    # Update 'inequality' part of y.
+    g[(n+k+1):end] += (I - Diagonal(y[ne_ind] - (b_ne - Ax[ne_ind]) .≥ 0)) * fnorm(dua_res_ne, norm_dua_ne)
+    return g
+  end
+  return grad_fn
 end
 
 """
@@ -189,13 +234,36 @@ a `QuadraticProgram`.
 function forward_backward_error_subgradient(qp::QuadraticProgram)
   m, n = size(qp.A)
   compiled_loss_tape = compile(GradientTape(forward_backward_error(qp), randn(m + n)))
-  return z -> gradient!(compiled_loss_tape, z)
+  return z -> gradient!(compiled_loss_tape, copy(z))
 end
 
 function kkt_error_subgradient(qp::QuadraticProgram)
   m, n = size(qp.A)
   compiled_loss_tape = compile(GradientTape(kkt_error(qp), randn(2m + n)))
-  return z -> gradient!(compiled_loss_tape, z)
+  return z -> gradient!(compiled_loss_tape, copy(z))
+end
+
+function subgradient_method(
+  qp::QuadraticProgram,
+  z₀::Vector{Float64},
+  oracle_calls_limit::Int,
+  ϵ_tol::Float64,
+)
+  loss = forward_backward_error(qp)
+  grad = forward_backward_error_subgradient_direct(qp)
+  curr_iter = copy(z₀)
+  for iter in 1:oracle_calls_limit
+    f = loss(curr_iter)
+    if f ≤ ϵ_tol
+      return curr_iter, iter + 1
+    end
+    g = grad(curr_iter)
+    curr_iter = curr_iter - f * g / (norm(g)^2)
+    if (iter % 500 == 1)
+      @info "subgradient_method - loss = $(loss(curr_iter)) - |g|: $(norm(g)) - tol: $(ϵ_tol)"
+    end
+  end
+  return curr_iter, oracle_calls_limit
 end
 
 """
@@ -231,7 +299,7 @@ function fallback_algorithm(
       z_prev[1:n],
       z_prev[(n+1):(n+m)],
       z_prev[(n+m+1):end],
-      ϵ_tol = ϵ_tol,
+      ϵ_tol = 1e-15,
       ϵ_rel = ϵ_rel,
       use_direct_solver = true,
       iteration_limit = exit_frequency,
@@ -297,7 +365,7 @@ function superpolyak_with_scs(
   kwargs...,
 )
   f = forward_backward_error(qp)
-  g = forward_backward_error_subgradient(qp)
+  g = forward_backward_error_subgradient_direct(qp)
   if (ϵ_decrease ≥ 1) || (ϵ_decrease < 0)
     throw(BoundsError(ϵ_decrease, "ϵ_decrease must be between 0 and 1"))
   end
@@ -318,7 +386,7 @@ function superpolyak_with_scs(
   # Initial dual scale factor for calls to SCS.
   scs_scale = 0.1
   # Number of variables and constraints.
-  n = size(qp.A, 2)
+  m, n = size(qp.A)
   @info "Using bundle system solver: QR_COMPACT_WV"
   while true
     cumul_time = 0.0
@@ -340,21 +408,21 @@ function superpolyak_with_scs(
       if (!isnothing(bundle_step)) && (bundle_loss < Δ)
         copyto!(z, bundle_step)
       end
-      @info "Bundle step failed (k=$(idx), f=$(bundle_loss)) -- using fallback algorithm"
+      @info "Bundle step failed (k=$(idx), f=$(min(Δ, bundle_loss))) -- using fallback algorithm"
       scs_result = fallback_algorithm(
-          qp,
-          z[1:n],
-          z[(n+1):end],
-          exit_frequency,
-          # oracle_calls_limit
-          max(oracle_calls_limit - (sum(oracle_calls) + bundle_calls), 1),
-          # ϵ_tol
-          target_tol,
-          ϵ_rel,
-          # initial_scale
-          scs_scale,
-        )
-      copyto!(z, scs_result.sol)
+        qp,
+        z[1:n],
+        z[(n+1):end],
+        exit_frequency,
+        # oracle_calls_limit
+        max(oracle_calls_limit - (sum(oracle_calls) + bundle_calls), 1),
+        # ϵ_tol
+        target_tol,
+        ϵ_rel,
+        # initial_scale
+        scs_scale,
+      )
+      copyto!(z, scs_result.sol[1:(n + m)])
       fallback_calls = scs_result.iter
       @info "Updating scs scale: $(scs_result.scale) from $(scs_scale)"
       scs_scale = scs_result.scale

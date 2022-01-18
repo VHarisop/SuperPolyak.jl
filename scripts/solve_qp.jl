@@ -20,32 +20,33 @@ function run_experiment(
   η_lb,
   bundle_budget,
   oracle_calls_limit,
+  exit_frequency,
   no_amortized,
 )
   problem = read_problem_from_qps_file(filename, :fixed)
   m, n = size(problem.A)
-  z_init = zeros(2m + n)
   @info "Running SCS..."
-  scs_result = solve_with_scs(
+  scs_result = fallback_algorithm(
     problem,
     zeros(n),
     zeros(m),
-    zeros(m),
-    ϵ_tol = ϵ_tol,
-    ϵ_rel = ϵ_rel,
-    use_direct_solver = true,
-    iteration_limit = oracle_calls_limit,
+    exit_frequency,
+    oracle_calls_limit,
+    ϵ_tol,
+    ϵ_rel,
+    0.1,
   )
   @info "Running SuperPolyak..."
   result = superpolyak_with_scs(
     problem,
-    z_init,
+    zeros(m + n),
     ϵ_decrease = ϵ_decrease,
     ϵ_distance = ϵ_distance,
     ϵ_tol = ϵ_tol,
     ϵ_rel = ϵ_rel,
     η_est = η_est,
     η_lb = η_lb,
+    exit_frequency = exit_frequency,
     oracle_calls_limit = oracle_calls_limit,
     bundle_budget = bundle_budget,
   )
@@ -69,6 +70,10 @@ settings = add_base_options(settings)
   arg_type = Int
   help = "The per-call budget of the bundle method used."
   default = 1000
+  "--exit-frequency"
+  arg_type = Int
+  help = "The frequency of exits to check the termination condition."
+  default = 250
   "--oracle-calls-limit"
   arg_type = Int
   help = "The total number of oracle calls allowed."
@@ -91,5 +96,6 @@ run_experiment(
   args["eta-lb"],
   args["bundle-budget"],
   args["oracle-calls-limit"],
+  args["exit-frequency"],
   args["no-amortized"],
 )
