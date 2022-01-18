@@ -10,44 +10,6 @@ using SuperPolyak
 include("util.jl")
 include("scs_util.jl")
 
-function solve_with_restart(
-  problem::QuadraticProgram,
-  x_prev::Vector{Float64},
-  y_prev::Vector{Float64},
-  z_prev::Vector{Float64},
-  exit_frequency::Int,
-  oracle_calls_limit::Int,
-  ϵ_tol::Float64,
-  ϵ_rel::Float64,
-)
-  m, n = size(problem.A)
-  iter_total = 0
-  scale = 0.1
-  while iter_total < oracle_calls_limit
-    scs_result = solve_with_scs(
-      problem,
-      copy(x_prev),
-      copy(y_prev),
-      copy(z_prev),
-      ϵ_tol = ϵ_tol,
-      ϵ_rel = ϵ_rel,
-      use_direct_solver = true,
-      iteration_limit = exit_frequency,
-      initial_scale = scale,
-    )
-    iter_total += scs_result.iter
-    scale = scs_result.scale
-    if (scs_result.status_val == 2)
-      copyto!(x_prev, scs_result.sol[1:n])
-      copyto!(y_prev, scs_result.sol[(n+1):(n+m)])
-      copyto!(z_prev, scs_result.sol[(n+m+1):end])
-    else
-      return iter_total
-    end
-  end
-  return iter_total
-end
-
 function run_experiment(
   filename::String,
   ϵ_tol::Float64,
@@ -69,21 +31,23 @@ function run_experiment(
     iteration_limit = oracle_calls_limit,
   )
   @info "Running SCS with fixed frequency exits"
-  iters_with_restarts = solve_with_restart(
+  scs_result_with_restarts = fallback_algorithm(
     problem,
     zeros(n),
-    zeros(m),
     zeros(m),
     exit_frequency,
     oracle_calls_limit,
     ϵ_tol,
     ϵ_rel,
+    0.1,
   )
-  @info "SCS iters: $(scs_result.iter) - SuperPolyak iters: $(iters_with_restarts)"
+  @info "SCS iters: no_restarts = $(scs_result.iter) - restarts = $(scs_result_with_restarts.iter)"
 end
 
 settings = ArgParseSettings(
-  description = "Compare full-fledged SCS against a version which exits periodically."
+  description = "Compare full-fledged SCS against a version which exits " *
+                "periodically to check if the forward-backward residual " *
+                "has fallen below eps_tol."
 )
 @add_arg_table! settings begin
   "--filename"

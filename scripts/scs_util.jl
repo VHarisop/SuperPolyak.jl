@@ -1,4 +1,5 @@
 using LinearAlgebra
+using Printf
 using SparseArrays
 
 import ReverseDiff: compile, gradient!, GradientTape
@@ -12,16 +13,15 @@ struct QuadraticProgram
   P::AbstractMatrix{Float64}
   b::Vector{Float64}
   c::Vector{Float64}
-  num_equalities::Int
 end
 
 """
-  read_problem_from_qps_file(filename::String) -> OsqpProblem
+  read_problem_from_qps_file(filename::String, mpsformat; no_eqs::Bool = true) -> QuadraticProgram
 
 Read a quadratic programming problem from a .QPS file and convert to the
 representation used by the SCS solver.
 """
-function read_problem_from_qps_file(filename::String, mpsformat)
+function read_problem_from_qps_file(filename::String, mpsformat; no_eqs::Bool = true)
   problem = readqps(filename, mpsformat=mpsformat)
   m, n = problem.ncon, problem.nvar
   # The objective matrix is symmetric and the .QPS file gives
@@ -31,22 +31,16 @@ function read_problem_from_qps_file(filename::String, mpsformat)
   A = sparse(problem.arows, problem.acols, problem.avals, m, n)
   ℓ = problem.lcon
   u = problem.ucon
-  # Indices where Ax = b and ℓ ≤ Ax ≤ u.
-  eq_bounds = abs.(u .- ℓ) .≤ 1e-15
-  ne_bounds = abs.(u .- ℓ) .> 1e-15
-  # Augmented matrix
-  A_lb = [-A[ne_bounds, :]; A[ne_bounds, :]; -sparse(1.0I, n, n); sparse(1.0I, n, n)]
-  b_lb = [-ℓ[ne_bounds]; u[ne_bounds]; -problem.lvar; problem.uvar]
+  # Ax + s = b; s ≥ 0.
+  A_aug = [-A; A; -sparse(1.0I, n, n); sparse(1.0I, n, n)]
+  b_aug = [-ℓ; u; -problem.lvar; problem.uvar]
   # Only include nontrivial variable bounds (SCS will yield nan's otherwise).
-  finite_ind = isfinite.(b_lb)
-  A_aug = [A[eq_bounds, :]; A_lb[finite_ind, :]]
-  b_aug = [u[eq_bounds]; b_lb[finite_ind]]
+  finite_ind = isfinite.(b_aug)
   return QuadraticProgram(
-    A_aug,
+    A_aug[finite_ind, :],
     copy(P),
-    b_aug,
+    b_aug[finite_ind],
     problem.c,
-    sum(eq_bounds),     # num_equalities
   )
 end
 
@@ -89,8 +83,8 @@ function solve_with_scs(
     triu(qp.P),
     qp.b,
     qp.c,
-    qp.num_equalities,
-    m - qp.num_equalities,
+    0,                # number of equalities
+    m,                # number of inequalities
     zeros(0),
     zeros(0),
     zeros(Int, 0),
@@ -129,14 +123,12 @@ function proj_cone!(
   z::Vector{Float64},
 )
   m, n = size(qp.A)
-  num_eq = qp.num_equalities
-  y_ne = view(z, (n+num_eq+1):(n+m))
+  y = view(z, (n+1):(n+m))
   s = view(z, (n+m+1):(n+2m))
-  # s should be 0 on 1:(num_eq)
-  s[1:num_eq] .= 0.0
-  # s and y should be nonnegative on (num_eq+1):m
+  both_positive = (y .> 0) .& (s .> 0)
+  # s, y should be nonnegative and s_i y_i = 0.
   s[s .< 0] .= 0.0
-  y_ne[y_ne .< 0] .= 0.0
+  y[y .< 0] .= 0.0
 end
 
 """
@@ -150,28 +142,54 @@ function kkt_error(qp::QuadraticProgram)
   c = qp.c
   P = qp.P
   m, n = size(A)
-  k = qp.num_equalities
-  # Range of linear inequalities.
-  ineq_range = (k+1):m
-  A_eq = A[1:k, :]
-  A_ne = A[ineq_range, :]
-  b_eq = b[1:k]
-  b_ne = b[ineq_range]
   loss_fn(z::AbstractVector) = begin
     x = z[1:n]
-    y_eq = z[(n+1):(n+k)]
-    y_ne = max.(z[(n+k+1):(n+m)], 0.0)
-    s_ne = max.(z[(n+m+k+1):end], 0.0)
+    y = z[(n+1):(n+m)]
+    s = z[(n+m+1):end]
     Px = P * x
     return max(
-      norm(A_eq * x - b_eq, Inf),
-      norm(A_ne * x + s_ne - b_ne, Inf),
-      norm(Px + A_ne'y_ne + A_eq'y_eq + c, Inf),
-      abs(x' * Px + c'x + b_eq'y_eq + b_ne'y_ne),
-      norm(s_ne .* y_ne, Inf),
+      norm(A * x - b, Inf),
+      norm(Px + A'y + c, Inf),
+      abs(x' * Px + c'x + b'y),
+      norm(s .* y, Inf),
     )
   end
   return loss_fn
+end
+
+"""
+  forward_backward_error(qp::QuadraticProgram)
+
+Return a callable that computes the forward-backward error for a
+`QuadraticProgram`.
+"""
+function forward_backward_error(qp::QuadraticProgram)
+  A = qp.A
+  b = qp.b
+  c = qp.c
+  P = qp.P
+  n = size(A, 2)
+  # Expect length(z) = n + m.
+  loss_fn(z::AbstractVector) = begin
+    x = z[1:n]
+    y = z[(n+1):end]
+    diff_x = c + P*x + A'y      # x - (x - (c + Qx + A'y))
+    diff_y = y - max.(0.0, y - (b - A * x))
+    return max(norm(diff_x, Inf), norm(diff_y, Inf))
+  end
+  return loss_fn
+end
+
+"""
+  forward_backward_error_subgradient(qp::QuadraticProgram)
+
+Return a callable that computes a subgradient of the forward-backward error for
+a `QuadraticProgram`.
+"""
+function forward_backward_error_subgradient(qp::QuadraticProgram)
+  m, n = size(qp.A)
+  compiled_loss_tape = compile(GradientTape(forward_backward_error(qp), randn(m + n)))
+  return z -> gradient!(compiled_loss_tape, z)
 end
 
 function kkt_error_subgradient(qp::QuadraticProgram)
@@ -180,6 +198,90 @@ function kkt_error_subgradient(qp::QuadraticProgram)
   return z -> gradient!(compiled_loss_tape, z)
 end
 
+"""
+  fallback_algorithm(qp::QuadraticProgram, x₀::Vector{Float64}, y₀::Vector{Float64},
+                     exit_frequency::Int, oracle_calls_limit::Int, ϵ_tol::Float64,
+                     ϵ_rel::Float64, scale::Float64)
+
+The fallback algorithm used when solving a QP with forward-backward error as
+the loss function.
+"""
+function fallback_algorithm(
+  qp::QuadraticProgram,
+  x₀::Vector{Float64},
+  y₀::Vector{Float64},
+  exit_frequency::Int,
+  oracle_calls_limit::Int,
+  ϵ_tol::Float64,
+  ϵ_rel::Float64,
+  scale::Float64,
+)
+  loss_fn = forward_backward_error(qp)
+  m, n = size(qp.A)
+  iter_total = 0
+  time_total = 0.0
+  z_prev = zeros(n + 2m)
+  copyto!(z_prev, 1, x₀, 1, n)
+  copyto!(z_prev, n+1, y₀, 1, m)
+  # Determine s from x₀ and y₀.
+  z_prev[(n+m+1):end] .= max.(qp.b - qp.A * x₀, 0.0)
+  while iter_total < oracle_calls_limit
+    scs_result = solve_with_scs(
+      qp,
+      z_prev[1:n],
+      z_prev[(n+1):(n+m)],
+      z_prev[(n+m+1):end],
+      ϵ_tol = ϵ_tol,
+      ϵ_rel = ϵ_rel,
+      use_direct_solver = true,
+      iteration_limit = exit_frequency,
+      initial_scale = scale,
+    )
+    iter_total += scs_result.iter
+    time_total += scs_result.solve_time
+    scale = scs_result.scale
+    if (scs_result.status_val in [1; 2])
+      # Warm-start.
+      copyto!(z_prev, scs_result.sol)
+    else
+      # Exit unsuccessfully if solver status was not 'Solved'.
+      return ScsResult(
+        scs_result.sol,
+        iter_total,
+        time_total,
+        scale,
+        "UNSOLVED",
+        scs_result.status_val,
+      )
+    end
+    # Keep z[1:(n+m)] = (x, y) to evaluate loss.
+    new_loss = loss_fn(z_prev[1:(n+m)])
+    @info "Fallback - it = $(iter_total) - loss = $(@sprintf("%.8f", new_loss))"
+    # Exit successfully if forward-backward was sufficiently reduced.
+    if new_loss ≤ ϵ_tol
+      return ScsResult(
+        z_prev,
+        iter_total,
+        time_total,
+        scale,
+        "SOLVED",
+        1,        # Status value for 'Solved'.
+      )
+    end
+  end
+end
+
+"""
+  superpolyak_with_scs(qp::QuadraticProgram, z₀::Vector{Float64};
+                       ϵ_tol::Float64 = 1e-15, ϵ_rel::Float64 = 1e-15,
+                       ϵ_decrease::Float64 = 1/2, ϵ_distance::Float64 = 3/2,
+                       η_est::Float64 = 1.0, η_lb::Float64 = 0.1,
+                       exit_frequency::Int = 250, oracle_calls_limit::Int = 100000,
+                       bundle_budget::Int = length(z₀), kwargs...)
+
+Run SuperPolyak using the SCS solver as the fallback method to solve a
+`QuadraticProgram`. The loss used is the forward-backward error.
+"""
 function superpolyak_with_scs(
   qp::QuadraticProgram,
   z₀::Vector{Float64};
@@ -189,12 +291,13 @@ function superpolyak_with_scs(
   ϵ_distance::Float64 = (3 / 2),
   η_est::Float64 = 1.0,
   η_lb::Float64 = 0.1,
+  exit_frequency::Int = 250,
   oracle_calls_limit::Int = 100000,
   bundle_budget::Int = length(z₀),
   kwargs...,
 )
-  f = kkt_error(qp)
-  g = kkt_error_subgradient(qp)
+  f = forward_backward_error(qp)
+  g = forward_backward_error_subgradient(qp)
   if (ϵ_decrease ≥ 1) || (ϵ_decrease < 0)
     throw(BoundsError(ϵ_decrease, "ϵ_decrease must be between 0 and 1"))
   end
@@ -206,7 +309,7 @@ function superpolyak_with_scs(
       ),
     )
   end
-  x = z₀[:]
+  z = z₀[:]
   fvals = [f(z₀)]
   oracle_calls = [0]
   elapsed_time = [0.0]
@@ -215,7 +318,7 @@ function superpolyak_with_scs(
   # Initial dual scale factor for calls to SCS.
   scs_scale = 0.1
   # Number of variables and constraints.
-  m, n = size(qp.A)
+  n = size(qp.A, 2)
   @info "Using bundle system solver: QR_COMPACT_WV"
   while true
     cumul_time = 0.0
@@ -225,7 +328,7 @@ function superpolyak_with_scs(
     # Remaining budget for the bundle method.
     budget_rem = min(bundle_budget, oracle_calls_limit - sum(oracle_calls))
     bundle_stats = @timed bundle_step, bundle_calls =
-      SuperPolyak.build_bundle_wv(f, g, x, η, 0.0, η_est, budget_rem)
+      SuperPolyak.build_bundle_wv(f, g, z, η, 0.0, η_est, budget_rem)
     cumul_time += bundle_stats.time - bundle_stats.gctime
     # Adjust η_est if the bundle step did not satisfy the descent condition.
     bundle_loss = isnothing(bundle_step) ? Δ : f(bundle_step)
@@ -235,44 +338,42 @@ function superpolyak_with_scs(
     end
     if isnothing(bundle_step) || (bundle_loss > target_tol)
       if (!isnothing(bundle_step)) && (bundle_loss < Δ)
-        copyto!(x, bundle_step)
-        proj_cone!(qp, x)
+        copyto!(z, bundle_step)
       end
       @info "Bundle step failed (k=$(idx), f=$(bundle_loss)) -- using fallback algorithm"
-      fallback_stats = @timed scs_result =
-        solve_with_scs(
+      scs_result = fallback_algorithm(
           qp,
-          x[1:n],
-          x[(n+1):(n+m)],
-          x[(n+m+1):end],
-          ϵ_tol = target_tol,
-          ϵ_rel = ϵ_rel,
-          initial_scale = scs_scale,
-          iteration_limit = max(
-            oracle_calls_limit - (sum(oracle_calls) + bundle_calls),
-            0,
-          ),
+          z[1:n],
+          z[(n+1):end],
+          exit_frequency,
+          # oracle_calls_limit
+          max(oracle_calls_limit - (sum(oracle_calls) + bundle_calls), 1),
+          # ϵ_tol
+          target_tol,
+          ϵ_rel,
+          # initial_scale
+          scs_scale,
         )
-      copyto!(x, scs_result.sol)
+      copyto!(z, scs_result.sol)
       fallback_calls = scs_result.iter
       @info "Updating scs scale: $(scs_result.scale) from $(scs_scale)"
       scs_scale = scs_result.scale
-      cumul_time += fallback_stats.time - fallback_stats.gctime
+      cumul_time += scs_result.solve_time
       # Include the number of oracle calls made by the failed bundle step.
       push!(oracle_calls, fallback_calls + bundle_calls)
       push!(step_types, "FALLBACK")
     else
       @info "Bundle step successful (k=$(idx))"
-      x = bundle_step[:]
+      copyto!(z, bundle_step)
       push!(oracle_calls, bundle_calls)
       push!(step_types, "BUNDLE")
     end
     idx += 1
-    push!(fvals, f(x))
+    push!(fvals, f(z))
     push!(elapsed_time, cumul_time)
     if (fvals[end] ≤ ϵ_tol) || (sum(oracle_calls) ≥ oracle_calls_limit)
       return SuperPolyak.SuperPolyakResult(
-        x,
+        z,
         fvals,
         oracle_calls,
         elapsed_time,
