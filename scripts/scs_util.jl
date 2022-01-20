@@ -286,6 +286,7 @@ function fallback_algorithm(
 )
   loss_fn = forward_backward_error(qp)
   m, n = size(qp.A)
+  k = qp.num_equalities
   iter_total = 0
   time_total = 0.0
   z_prev = zeros(n + 2m)
@@ -293,6 +294,8 @@ function fallback_algorithm(
   copyto!(z_prev, n+1, y₀, 1, m)
   # Determine s from x₀ and y₀.
   z_prev[(n+m+1):end] .= max.(qp.b - qp.A * x₀, 0.0)
+  # The equality part of s should be 0.
+  z_prev[(n+m+1):(n+m+k)] .= 0.0
   while iter_total < oracle_calls_limit
     scs_result = solve_with_scs(
       qp,
@@ -353,7 +356,8 @@ end
                        ϵ_decrease::Float64 = 1/2, ϵ_distance::Float64 = 3/2,
                        η_est::Float64 = 1.0, η_lb::Float64 = 0.1,
                        exit_frequency::Int = 250, oracle_calls_limit::Int = 100000,
-                       bundle_budget::Int = length(z₀), kwargs...)
+                       bundle_budget::Int = length(z₀), budget_weight::Float64 = 0.0,
+                       kwargs...)
 
 Run SuperPolyak using the SCS solver as the fallback method to solve a
 `QuadraticProgram`. The loss used is the forward-backward error.
@@ -370,6 +374,7 @@ function superpolyak_with_scs(
   exit_frequency::Int = 250,
   oracle_calls_limit::Int = 100000,
   bundle_budget::Int = length(z₀),
+  budget_weight::Float64 = 0.0,
   kwargs...,
 )
   f = forward_backward_error(qp)
@@ -396,13 +401,15 @@ function superpolyak_with_scs(
   # Number of variables and constraints.
   m, n = size(qp.A)
   @info "Using bundle system solver: QR_COMPACT_WV"
+  # Initialize bundle budget.
+  current_budget = bundle_budget
   while true
     cumul_time = 0.0
     Δ = fvals[end]
     η = ϵ_distance^(idx)
     target_tol = max(ϵ_decrease * Δ, ϵ_tol)
     # Remaining budget for the bundle method.
-    budget_rem = min(bundle_budget, oracle_calls_limit - sum(oracle_calls))
+    budget_rem = min(current_budget, oracle_calls_limit - sum(oracle_calls))
     bundle_stats = @timed bundle_step, bundle_calls =
       SuperPolyak.build_bundle_wv(f, g, z, η, 0.0, η_est, budget_rem)
     cumul_time += bundle_stats.time - bundle_stats.gctime
@@ -432,8 +439,10 @@ function superpolyak_with_scs(
       )
       copyto!(z, scs_result.sol[1:(n + m)])
       fallback_calls = scs_result.iter
-      @info "Updating scs scale: $(scs_result.scale) from $(scs_scale)"
+      @info "Updating scs scale: $(scs_result.scale)"
       scs_scale = scs_result.scale
+      current_budget = Int(ceil(budget_weight * fallback_calls + (1 - budget_weight) * current_budget))
+      @info "Updating bundle budget: $(current_budget)"
       cumul_time += scs_result.solve_time
       # Include the number of oracle calls made by the failed bundle step.
       push!(oracle_calls, fallback_calls + bundle_calls)

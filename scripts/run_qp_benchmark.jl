@@ -31,6 +31,7 @@ function run_benchmark(
   η_est::Float64,
   η_lb::Float64,
   bundle_budget::Int,
+  budget_weight::Float64,
   oracle_calls_limit::Int,
   exit_frequency::Int,
   no_amortized::Bool,
@@ -49,6 +50,7 @@ function run_benchmark(
       η_est,
       η_lb,
       bundle_budget,
+      budget_weight,
       oracle_calls_limit,
       exit_frequency,
       no_amortized,
@@ -71,6 +73,7 @@ function run_experiment(
   η_est,
   η_lb,
   bundle_budget,
+  budget_weight,
   oracle_calls_limit,
   exit_frequency,
   no_amortized,
@@ -108,6 +111,7 @@ function run_experiment(
     exit_frequency = exit_frequency,
     oracle_calls_limit = oracle_calls_limit,
     bundle_budget = bundle_budget,
+    budget_weight = budget_weight,
   )
   df_bundle = save_superpolyak_result(
     joinpath(output_folder, "superpolyak_$(filename_noext(filename)).csv"),
@@ -145,6 +149,10 @@ settings = add_base_options(settings)
   arg_type = Int
   help = "The per-call budget of the bundle method used."
   default = 1000
+  "--budget-weight"
+  arg_type = Float64
+  help = "The weight by which to update the estimate of the bundle budget."
+  default = 0.5
   "--oracle-calls-limit"
   arg_type = Int
   help = "The total number of oracle calls allowed."
@@ -167,6 +175,7 @@ run_benchmark(
   args["eta-est"],
   args["eta-lb"],
   args["bundle-budget"],
+  args["budget-weight"],
   args["oracle-calls-limit"],
   args["exit-frequency"],
   args["no-amortized"],
