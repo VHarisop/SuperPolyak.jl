@@ -375,6 +375,7 @@ function superpolyak_with_scs(
   oracle_calls_limit::Int = 100000,
   bundle_budget::Int = length(z₀),
   budget_weight::Float64 = 0.0,
+  bundle_max_budget::Int = bundle_budget,
   kwargs...,
 )
   f = forward_backward_error(qp)
@@ -441,7 +442,10 @@ function superpolyak_with_scs(
       fallback_calls = scs_result.iter
       @info "Updating scs scale: $(scs_result.scale)"
       scs_scale = scs_result.scale
-      current_budget = Int(ceil(budget_weight * fallback_calls + (1 - budget_weight) * current_budget))
+      current_budget = min(
+        Int(ceil(budget_weight * fallback_calls + (1 - budget_weight) * current_budget)),
+        bundle_max_budget,
+      )
       @info "Updating bundle budget: $(current_budget)"
       cumul_time += scs_result.solve_time
       # Include the number of oracle calls made by the failed bundle step.

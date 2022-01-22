@@ -32,6 +32,7 @@ function run_benchmark(
   η_lb::Float64,
   bundle_budget::Int,
   budget_weight::Float64,
+  bundle_max_budget::Int,
   oracle_calls_limit::Int,
   exit_frequency::Int,
   no_amortized::Bool,
@@ -51,6 +52,7 @@ function run_benchmark(
       η_lb,
       bundle_budget,
       budget_weight,
+      bundle_max_budget,
       oracle_calls_limit,
       exit_frequency,
       no_amortized,
@@ -66,17 +68,18 @@ end
 function run_experiment(
   filename::String,
   output_folder::String,
-  ϵ_decrease,
-  ϵ_distance,
-  ϵ_tol,
-  ϵ_rel,
-  η_est,
-  η_lb,
-  bundle_budget,
-  budget_weight,
-  oracle_calls_limit,
-  exit_frequency,
-  no_amortized,
+  ϵ_decrease::Float64,
+  ϵ_distance::Float64,
+  ϵ_tol::Float64,
+  ϵ_rel::Float64,
+  η_est::Float64,
+  η_lb::Float64,
+  bundle_budget::Int,
+  budget_weight::Float64,
+  bundle_max_budget::Int,
+  oracle_calls_limit::Int,
+  exit_frequency::Int,
+  no_amortized::Bool,
 )
   instance_name = filename_noext(filename)
   problem = read_problem_from_qps_file(filename, :fixed)
@@ -112,6 +115,7 @@ function run_experiment(
     oracle_calls_limit = oracle_calls_limit,
     bundle_budget = bundle_budget,
     budget_weight = budget_weight,
+    bundle_max_budget = bundle_max_budget,
   )
   df_bundle = save_superpolyak_result(
     joinpath(output_folder, "superpolyak_$(filename_noext(filename)).csv"),
@@ -148,11 +152,15 @@ settings = add_base_options(settings)
   "--bundle-budget"
   arg_type = Int
   help = "The per-call budget of the bundle method used."
-  default = 1000
+  default = 100
   "--budget-weight"
   arg_type = Float64
   help = "The weight by which to update the estimate of the bundle budget."
   default = 0.5
+  "--bundle-max-budget"
+  arg_type = Float64
+  help = "The maximum per-call budget of the bundle method used."
+  default = 1000
   "--oracle-calls-limit"
   arg_type = Int
   help = "The total number of oracle calls allowed."
@@ -176,6 +184,7 @@ run_benchmark(
   args["eta-lb"],
   args["bundle-budget"],
   args["budget-weight"],
+  args["bundle-max-budget"],
   args["oracle-calls-limit"],
   args["exit-frequency"],
   args["no-amortized"],
