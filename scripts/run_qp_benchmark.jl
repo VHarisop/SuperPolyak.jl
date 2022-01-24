@@ -33,6 +33,7 @@ function run_benchmark(
   bundle_budget::Int,
   budget_weight::Float64,
   bundle_max_budget::Int,
+  bundle_step_threshold::Float64,
   oracle_calls_limit::Int,
   exit_frequency::Int,
   no_amortized::Bool,
@@ -53,6 +54,7 @@ function run_benchmark(
       bundle_budget,
       budget_weight,
       bundle_max_budget,
+      bundle_step_threshold,
       oracle_calls_limit,
       exit_frequency,
       no_amortized,
@@ -77,6 +79,7 @@ function run_experiment(
   bundle_budget::Int,
   budget_weight::Float64,
   bundle_max_budget::Int,
+  bundle_step_threshold::Float64,
   oracle_calls_limit::Int,
   exit_frequency::Int,
   no_amortized::Bool,
@@ -116,6 +119,7 @@ function run_experiment(
     bundle_budget = bundle_budget,
     budget_weight = budget_weight,
     bundle_max_budget = bundle_max_budget,
+    bundle_step_threshold = bundle_step_threshold,
   )
   df_bundle = save_superpolyak_result(
     joinpath(output_folder, "superpolyak_$(filename_noext(filename)).csv"),
@@ -158,9 +162,13 @@ settings = add_base_options(settings)
   help = "The weight by which to update the estimate of the bundle budget."
   default = 0.5
   "--bundle-max-budget"
-  arg_type = Float64
+  arg_type = Int
   help = "The maximum per-call budget of the bundle method used."
   default = 1000
+  "--bundle-step-threshold"
+  arg_type = Float64
+  help = "The loss threshold below which bundle steps will be attempted."
+  default = 1e-4
   "--oracle-calls-limit"
   arg_type = Int
   help = "The total number of oracle calls allowed."
@@ -185,6 +193,7 @@ run_benchmark(
   args["bundle-budget"],
   args["budget-weight"],
   args["bundle-max-budget"],
+  args["bundle-step-threshold"],
   args["oracle-calls-limit"],
   args["exit-frequency"],
   args["no-amortized"],

@@ -120,6 +120,9 @@ function solve_with_scs(
     eps_infeas = 1e-100,
     scale = initial_scale,
     max_iters = max(iteration_limit, 1),
+    # Force Type-I AA with memory and period 10.
+    acceleration_lookback = 10,
+    acceleration_interval = 10,
   )
   solve_status = (result.info.status_val in [1; 2]) ? "SOLVED" : "UNSOLVED"
   return ScsResult(
@@ -376,6 +379,7 @@ function superpolyak_with_scs(
   bundle_budget::Int = length(z₀),
   budget_weight::Float64 = 0.0,
   bundle_max_budget::Int = bundle_budget,
+  bundle_step_threshold::Float64 = sqrt(ϵ_tol),
   kwargs...,
 )
   f = forward_backward_error(qp)
@@ -409,8 +413,9 @@ function superpolyak_with_scs(
     Δ = fvals[end]
     η = ϵ_distance^(idx)
     target_tol = max(ϵ_decrease * Δ, ϵ_tol)
-    # Remaining budget for the bundle method.
-    budget_rem = min(current_budget, oracle_calls_limit - sum(oracle_calls))
+    # Remaining budget for the bundle method. If loss is not below threshold yet,
+    # do not attempt a bundle step.
+    budget_rem = (Δ ≤ bundle_step_threshold) ? min(current_budget, oracle_calls_limit - sum(oracle_calls)) : 0
     bundle_stats = @timed bundle_step, bundle_calls =
       SuperPolyak.build_bundle_wv(f, g, z, η, 0.0, η_est, budget_rem)
     cumul_time += bundle_stats.time - bundle_stats.gctime

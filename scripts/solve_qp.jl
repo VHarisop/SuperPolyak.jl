@@ -21,6 +21,7 @@ function run_experiment(
   bundle_budget::Int,
   budget_weight::Float64,
   bundle_max_budget::Int,
+  bundle_step_threshold::Float64,
   oracle_calls_limit::Int,
   exit_frequency::Int,
   no_amortized::Bool,
@@ -28,15 +29,21 @@ function run_experiment(
   problem = read_problem_from_qps_file(filename, :fixed)
   m, n = size(problem.A)
   @info "Running SCS..."
-  scs_result = fallback_algorithm(
+  scs_result = superpolyak_with_scs(
     problem,
-    zeros(n),
-    zeros(m),
-    exit_frequency,
-    oracle_calls_limit,
-    ϵ_tol,
-    ϵ_rel,
-    0.1,
+    zeros(m + n),
+    ϵ_decrease = ϵ_decrease,
+    ϵ_distance = ϵ_distance,
+    ϵ_tol = ϵ_tol,
+    ϵ_rel = ϵ_rel,
+    η_est = η_est,
+    η_lb = η_lb,
+    exit_frequency = exit_frequency,
+    oracle_calls_limit = oracle_calls_limit,
+    bundle_budget = 0,
+    budget_weight = 0.0,
+    bundle_max_budget = 0,
+    bundle_step_threshold = ϵ_tol,
   )
   @info "Running SuperPolyak..."
   result = superpolyak_with_scs(
@@ -53,13 +60,20 @@ function run_experiment(
     bundle_budget = bundle_budget,
     budget_weight = budget_weight,
     bundle_max_budget = bundle_max_budget,
+    bundle_step_threshold = bundle_step_threshold,
+  )
+  df_scs = save_superpolyak_result(
+    "qp_$(filename_noext(filename))_scs.csv",
+    scs_result,
+    no_amortized,
   )
   df_bundle = save_superpolyak_result(
-    "qp_$(filename_noext(filename)).csv",
+    "qp_$(filename_noext(filename))_bundle.csv",
     result,
     no_amortized,
   )
-  @info "SCS iters: $(scs_result.iter) - SuperPolyak iters: $(df_bundle.cumul_oracle_calls[end])"
+  @info "SCS iters: $(df_scs.cumul_oracle_calls[end]) " *
+        "- SuperPolyak iters: $(df_bundle.cumul_oracle_calls[end])"
 end
 
 settings = ArgParseSettings(
@@ -82,6 +96,10 @@ settings = add_base_options(settings)
   arg_type = Float64
   help = "The weight by which to update running average of bundle budget."
   default = 0.5
+  "--bundle-step-threshold"
+  arg_type = Float64
+  help = "The loss threshold below which bundle steps will be triggered."
+  default = 1e-4
   "--exit-frequency"
   arg_type = Int
   help = "The frequency of exits to check the termination condition."
@@ -109,6 +127,7 @@ run_experiment(
   args["bundle-budget"],
   args["budget-weight"],
   args["bundle-max-budget"],
+  args["bundle-step-threshold"],
   args["oracle-calls-limit"],
   args["exit-frequency"],
   args["no-amortized"],
