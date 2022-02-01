@@ -24,7 +24,7 @@ Read a quadratic programming problem from a .QPS file and convert to the
 representation used by the SCS solver.
 """
 function read_problem_from_qps_file(filename::String, mpsformat)
-  problem = readqps(filename, mpsformat=mpsformat)
+  problem = readqps(filename, mpsformat = mpsformat)
   m, n = problem.ncon, problem.nvar
   # The objective matrix is symmetric and the .QPS file gives
   # the lower-triangular part only.
@@ -45,7 +45,7 @@ end
 
 function setup_osqp_model(qp::QuadraticProgram)
   model = OSQP.Model()
-  OSQP.setup!(model, P=qp.P, q=qp.c, A=qp.A, l=qp.l, u=qp.u)
+  OSQP.setup!(model, P = qp.P, q = qp.c, A = qp.A, l = qp.l, u = qp.u)
   return model
 end
 
@@ -77,7 +77,7 @@ function solve_with_osqp(
   ϵ_tol::Float64,
   ϵ_rel::Float64,
   iteration_limit::Int = 100000,
-  time_limit::Float64 = 0.0,
+  time_limit::Float64 = 0.0
 )
   # Update iteration and time limit.
   OSQP.update_settings!(
@@ -116,7 +116,7 @@ function forward_backward_error(qp::QuadraticProgram)
     x = z[1:n]
     y = z[(n+1):end]
     Ax = A * x
-    diff_x = c + P*x + A'y      # x - (x - (c + Qx + A'y))
+    diff_x = c + P * x + A'y      # x - (x - (c + Qx + A'y))
     diff_y = max.(l, min.(u, y + Ax)) - Ax
     return norm(diff_x) + norm(diff_y)
   end
@@ -150,9 +150,9 @@ function forward_backward_error_subgradient(qp::QuadraticProgram)
     norm_pri = norm(pri_res)
     norm_dua = norm(dua_res)
     g[1:n] = P * fnorm(pri_res, norm_pri) +
-      ((Diagonal(l .≤ (y + Ax) .≤ u) - I) * A)' * fnorm(dua_res, norm_dua)
+             ((Diagonal(l .≤ (y + Ax) .≤ u) - I) * A)' * fnorm(dua_res, norm_dua)
     g[(n+1):end] = A * fnorm(pri_res, norm_pri) +
-      (l .≤ (y + Ax) .≤ u) .* fnorm(dua_res, norm_dua)
+                   (l .≤ (y + Ax) .≤ u) .* fnorm(dua_res, norm_dua)
     return g
   end
   return grad_fn
@@ -187,7 +187,8 @@ end
                      ϵ_rel::Float64, scale::Float64)
 
 The fallback algorithm used when solving a QP with forward-backward error as
-the loss function.
+the loss function. It uses the OSQP solver to find a solution `(x, y)` with
+(absolute) error at most `ϵ_tol`.
 """
 function fallback_algorithm(
   qp::QuadraticProgram,
@@ -205,7 +206,7 @@ function fallback_algorithm(
   time_total = 0.0
   z_prev = zeros(n + m)
   copyto!(z_prev, 1, x₀, 1, n)
-  copyto!(z_prev, n+1, y₀, 1, m)
+  copyto!(z_prev, n + 1, y₀, 1, m)
   while iter_total < oracle_calls_limit
     osqp_result = solve_with_osqp(
       model,
@@ -213,7 +214,7 @@ function fallback_algorithm(
       z_prev[(n+1):end],  # dual_sol
       ϵ_tol = 1e-15,
       ϵ_rel = ϵ_rel,
-      iteration_limit = exit_frequency,
+      iteration_limit = min(oracle_calls_limit - iter_total, exit_frequency),
     )
     iter_total += osqp_result.iter
     time_total += osqp_result.solve_time
@@ -238,6 +239,13 @@ function fallback_algorithm(
     end
   end
   return OsqpResult(z_prev, iter_total, time_total, 0.1, 2)
+end
+
+function update_budget(budget::Int, oracle_calls::Int, weight::Float64, max_budget::Int)
+  return min(
+    Int(ceil(budget * (1 - weight) + weight * oracle_calls)),
+    max_budget,
+  )
 end
 
 """
@@ -267,7 +275,7 @@ function superpolyak_with_osqp(
   budget_weight::Float64 = 0.0,
   bundle_max_budget::Int = bundle_budget,
   bundle_step_threshold::Float64 = sqrt(ϵ_tol),
-  kwargs...,
+  kwargs...
 )
   f = forward_backward_error(qp)
   g = forward_backward_error_subgradient(qp)
@@ -291,7 +299,7 @@ function superpolyak_with_osqp(
   step_types = ["NONE"]
   idx = 0
   # Number of variables and constraints.
-  m, n = size(qp.A)
+  n = size(qp.A, 2)
   @info "Using bundle system solver: QR_COMPACT_WV"
   # Initialize bundle budget.
   current_budget = bundle_budget
@@ -331,8 +339,10 @@ function superpolyak_with_osqp(
       )
       copyto!(z, fallback_result.sol[1:end])
       fallback_calls = fallback_result.iter
-      current_budget = min(
-        Int(ceil(budget_weight * fallback_calls + (1 - budget_weight) * current_budget)),
+      current_budget = update_budget(
+        current_budget,
+        fallback_calls,
+        budget_weight,
         bundle_max_budget,
       )
       @info "Updating bundle budget: $(current_budget)"
@@ -341,8 +351,15 @@ function superpolyak_with_osqp(
       push!(oracle_calls, fallback_calls + bundle_calls)
       push!(step_types, "FALLBACK")
     else
-      @info "Bundle step successful (k=$(idx))"
+      @info "Bundle step successful (k=$(idx), f=$(bundle_loss))"
       copyto!(z, bundle_step)
+      current_budget = update_budget(
+        current_budget,
+        bundle_calls,
+        budget_weight,
+        bundle_max_budget,
+      )
+      @info "Updating bundle budget: $(current_budget)"
       push!(oracle_calls, bundle_calls)
       push!(step_types, "BUNDLE")
     end
