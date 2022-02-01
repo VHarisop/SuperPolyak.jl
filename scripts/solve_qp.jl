@@ -8,7 +8,7 @@ using Random
 using SuperPolyak
 
 include("util.jl")
-include("scs_util.jl")
+include("osqp_util.jl")
 
 function run_experiment(
   filename::String,
@@ -24,12 +24,11 @@ function run_experiment(
   bundle_step_threshold::Float64,
   oracle_calls_limit::Int,
   exit_frequency::Int,
-  no_amortized::Bool,
 )
   problem = read_problem_from_qps_file(filename, :fixed)
   m, n = size(problem.A)
-  @info "Running SCS..."
-  scs_result = superpolyak_with_scs(
+  @info "Running OSQP..."
+  osqp_result = superpolyak_with_osqp(
     problem,
     zeros(m + n),
     ϵ_decrease = ϵ_decrease,
@@ -46,7 +45,7 @@ function run_experiment(
     bundle_step_threshold = ϵ_tol,
   )
   @info "Running SuperPolyak..."
-  result = superpolyak_with_scs(
+  result = superpolyak_with_osqp(
     problem,
     zeros(m + n),
     ϵ_decrease = ϵ_decrease,
@@ -62,22 +61,22 @@ function run_experiment(
     bundle_max_budget = bundle_max_budget,
     bundle_step_threshold = bundle_step_threshold,
   )
-  df_scs = save_superpolyak_result(
-    "qp_$(filename_noext(filename))_scs.csv",
-    scs_result,
-    no_amortized,
+  df_osqp = save_superpolyak_result(
+    "qp_$(filename_noext(filename))_osqp.csv",
+    osqp_result,
+    true,
   )
   df_bundle = save_superpolyak_result(
     "qp_$(filename_noext(filename))_bundle.csv",
     result,
-    no_amortized,
+    true,
   )
-  @info "SCS iters: $(df_scs.cumul_oracle_calls[end]) " *
+  @info "OSQP iters: $(df_osqp.cumul_oracle_calls[end]) " *
         "- SuperPolyak iters: $(df_bundle.cumul_oracle_calls[end])"
 end
 
 settings = ArgParseSettings(
-  description = "Compare PolyakSGM with SuperPolyak on ReLU regression.",
+  description = "Compare OSQP with a SuperPolyak-accelerated version."
 )
 settings = add_base_options(settings)
 @add_arg_table! settings begin
@@ -130,5 +129,4 @@ run_experiment(
   args["bundle-step-threshold"],
   args["oracle-calls-limit"],
   args["exit-frequency"],
-  args["no-amortized"],
 )
