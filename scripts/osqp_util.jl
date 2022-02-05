@@ -158,6 +158,50 @@ function forward_backward_error_subgradient(qp::QuadraticProgram)
   return grad_fn
 end
 
+"""
+  forward_backward_error_oracle(qp::QuadraticProgram)
+
+Return a first-order oracle for the forward-backward error of a `QuadraticProgram`
+solved using the OSQP splitting algorithm.
+"""
+function forward_backward_error_oracle(qp::QuadraticProgram)
+  A = qp.A
+  l = qp.l
+  u = qp.u
+  c = qp.c
+  P = qp.P
+  m, n = size(A)
+  # Preallocate all vectors
+  x = zeros(n)
+  y = zeros(m)
+  pri_res = zeros(n)
+  dua_res = zeros(m)
+  g = zeros(n + m)
+  Ax = zeros(m)
+  bv = BitVector(undef, m)
+  oracle_fn(z::AbstractVector{Float64}) = begin
+    copyto!(x, 1, z, 1, n)
+    copyto!(y, 1, z, n + 1, m)
+    copyto!(Ax, A * x)
+    pri_res .= c .+ P * x .+ A'y
+    dua_res .= max.(l, min.(u, y .+ Ax)) .- Ax
+    nrm_pri = norm(pri_res)
+    nrm_dua = norm(dua_res)
+    if nrm_pri .> 1e-15
+      pri_res ./= nrm_pri
+    end
+    if nrm_dua .> 1e-15
+      dua_res ./= nrm_dua
+    end
+    # Bit-vector containing the active indices.
+    bv .= l .≤ (y + Ax) .≤ u
+    g[1:n] .= P * pri_res .+ A' * ((Int.(bv) .- 1) .* dua_res)
+    g[(n+1):end] .= A * pri_res .+ (bv .* dua_res)
+    return (nrm_pri + nrm_dua, g)
+  end
+  return oracle_fn
+end
+
 function subgradient_method(
   qp::QuadraticProgram,
   z₀::Vector{Float64},
@@ -249,6 +293,92 @@ function update_budget(budget::Int, oracle_calls::Int, weight::Float64, max_budg
 end
 
 """
+  build_bundle_wv(first_order_oracle::Function, y₀::Vector{Float64}, η::Float64,
+                  min_f::Float64, η_est::Float64, bundle_budget::Int = length(y₀))
+
+An efficient version of the BuildBundle algorithm using an incrementally updated
+QR algorithm based on the compact WV representation.
+"""
+function build_bundle_wv(
+  first_order_oracle::Function,
+  y₀::Vector{Float64},
+  η::Float64,
+  min_f::Float64,
+  η_est::Float64,
+  bundle_budget::Int = length(y₀),
+)
+  d = length(y₀)
+  bundle_budget = min(bundle_budget, d)
+  if bundle_budget ≤ 0
+    return y₀, 0
+  end
+  bvect = zeros(d)
+  fvals = zeros(bundle_budget)
+  y = y₀[:]
+  # To obtain a solution equivalent to applying the pseudoinverse, we use the
+  # QR factorization of the transpose of the bundle matrix. This is because the
+  # minimum-norm solution to Ax = b when A is full row rank can be found via the
+  # QR factorization of Aᵀ.
+  f₀, g₀ = first_order_oracle(y)
+  copyto!(bvect, g₀)
+  fvals[1] = f₀ - min_f + bvect' * (y₀ - y)
+  # Initialize Q and R
+  Q, R = SuperPolyak.wv_from_vector(bvect)
+  y = y₀ - bvect' \ fvals[1]
+  f, g = first_order_oracle(y)
+  resid = f - min_f
+  copyto!(bvect, g)
+  Δ = f₀ - min_f
+  # Exit early if solution escaped ball.
+  if norm(y - y₀) > η * Δ
+    return nothing, 1
+  end
+  # Best solution and function value found so far.
+  y_best = y[:]
+  f_best = resid[1]
+  # Cache right-hand side vector.
+  qr_rhs = zero(y)
+  for bundle_idx in 2:bundle_budget
+    # Invariant: resid[bundle_idx - 1] = f(y) - min_f.
+    fvals[bundle_idx] = resid + bvect' * (y₀ - y)
+    # Update the QR decomposition of A' after forming [A' bvect].
+    # Q is updated in-place.
+    SuperPolyak.qrinsert_wv!(Q, R, bvect)
+    # Terminate early if rank-deficient.
+    # size(R) = (d, bundle_idx).
+    if R[bundle_idx, bundle_idx] < 1e-15
+      @debug "Stopping (idx=$(bundle_idx)) - reason: rank-deficient A"
+      y = y₀ - Matrix(Q * R)' \ view(fvals, 1:bundle_idx)
+      return (norm(y - y₀) ≤ η * Δ ? y : y_best), bundle_idx
+    end
+    # Update y by solving the system Q * (inv(R)'fvals).
+    # Cost: O(d * bundle_idx)
+    Rupper = view(R, 1:bundle_idx, 1:bundle_idx)
+    qr_rhs[1:bundle_idx] = Rupper' \ fvals[1:bundle_idx]
+    y = y₀ - Q * qr_rhs
+    f, g = first_order_oracle(y)
+    resid = f - min_f
+    copyto!(bvect, g)
+    # Terminate early if new point escaped ball around y₀.
+    if (norm(y - y₀) > η * Δ)
+      @debug "Stopping at idx = $(bundle_idx) - reason: diverging"
+      return y_best, bundle_idx
+    end
+    # Terminate early if function value decreased significantly.
+    if (Δ < 0.5) && (resid < Δ^(1 + η_est))
+      return y, bundle_idx
+    end
+    # Otherwise, update best solution so far.
+    if (resid < f_best)
+      copyto!(y_best, y)
+      f_best = resid
+    end
+  end
+  return y_best, bundle_budget
+end
+
+
+"""
   superpolyak_with_osqp(qp::QuadraticProgram, z₀::Vector{Float64};
                         ϵ_tol::Float64 = 1e-15, ϵ_rel::Float64 = 1e-15,
                         ϵ_decrease::Float64 = 1/2, ϵ_distance::Float64 = 3/2,
@@ -277,8 +407,8 @@ function superpolyak_with_osqp(
   bundle_step_threshold::Float64 = sqrt(ϵ_tol),
   kwargs...
 )
+  first_order_oracle = forward_backward_error_oracle(qp)
   f = forward_backward_error(qp)
-  g = forward_backward_error_subgradient(qp)
   if (ϵ_decrease ≥ 1) || (ϵ_decrease < 0)
     throw(BoundsError(ϵ_decrease, "ϵ_decrease must be between 0 and 1"))
   end
@@ -312,7 +442,7 @@ function superpolyak_with_osqp(
     # do not attempt a bundle step.
     budget_rem = (Δ ≤ bundle_step_threshold) ? min(current_budget, oracle_calls_limit - sum(oracle_calls)) : 0
     bundle_stats = @timed bundle_step, bundle_calls =
-      SuperPolyak.build_bundle_wv(f, g, z, η, 0.0, η_est, budget_rem)
+      build_bundle_wv(first_order_oracle, z, η, 0.0, η_est, budget_rem)
     cumul_time += bundle_stats.time - bundle_stats.gctime
     # Adjust η_est if the bundle step did not satisfy the descent condition.
     bundle_loss = isnothing(bundle_step) ? Δ : f(bundle_step)
