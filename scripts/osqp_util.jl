@@ -319,15 +319,13 @@ function build_bundle_wv(
   # QR factorization of the transpose of the bundle matrix. This is because the
   # minimum-norm solution to Ax = b when A is full row rank can be found via the
   # QR factorization of Aᵀ.
-  f₀, g₀ = first_order_oracle(y)
-  copyto!(bvect, g₀)
+  f₀, bvect = first_order_oracle(y)
   fvals[1] = f₀ - min_f + bvect' * (y₀ - y)
   # Initialize Q and R
   Q, R = SuperPolyak.wv_from_vector(bvect)
   y = y₀ - bvect' \ fvals[1]
-  f, g = first_order_oracle(y)
+  f, bvect = first_order_oracle(y)
   resid = f - min_f
-  copyto!(bvect, g)
   Δ = f₀ - min_f
   # Exit early if solution escaped ball.
   if norm(y - y₀) > η * Δ
@@ -335,7 +333,7 @@ function build_bundle_wv(
   end
   # Best solution and function value found so far.
   y_best = y[:]
-  f_best = resid[1]
+  f_best = resid
   # Cache right-hand side vector.
   qr_rhs = zero(y)
   for bundle_idx in 2:bundle_budget
@@ -356,9 +354,8 @@ function build_bundle_wv(
     Rupper = view(R, 1:bundle_idx, 1:bundle_idx)
     qr_rhs[1:bundle_idx] = Rupper' \ fvals[1:bundle_idx]
     y = y₀ - Q * qr_rhs
-    f, g = first_order_oracle(y)
+    f, bvect = first_order_oracle(y)
     resid = f - min_f
-    copyto!(bvect, g)
     # Terminate early if new point escaped ball around y₀.
     if (norm(y - y₀) > η * Δ)
       @debug "Stopping at idx = $(bundle_idx) - reason: diverging"
