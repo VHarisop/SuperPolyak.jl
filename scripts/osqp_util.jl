@@ -89,11 +89,14 @@ function solve_with_osqp(
   )
   OSQP.warm_start!(model; x = primal_sol, y = dual_sol)
   result = OSQP.solve!(model)
+  # Workaround for obtaining info.rho_estimate until
+  # https://github.com/osqp/OSQP.jl/issues/99 is included in release.
+  rho_estimate = unsafe_load(unsafe_load(model.workspace).info).rho_estimate
   return OsqpResult(
     [result.x; result.y],
     result.info.iter,
     result.info.solve_time,
-    result.info.rho_estimate,
+    rho_estimate,
     result.info.status_val,
   )
 end
@@ -179,12 +182,15 @@ function forward_backward_error_oracle(qp::QuadraticProgram)
   g = zeros(n + m)
   Ax = zeros(m)
   bv = BitVector(undef, m)
-  oracle_fn(z::AbstractVector{Float64}) = begin
+  # Callable accepts the current vector and a scaling parameter
+  # that assigns weight ρ to the primal part and (1 / ρ) to the
+  # dual part of the residual.
+  oracle_fn(z::AbstractVector{Float64}, ρ::Float64 = 1.0) = begin
     copyto!(x, 1, z, 1, n)
     copyto!(y, 1, z, n + 1, m)
     copyto!(Ax, A * x)
-    pri_res .= c .+ P * x .+ A'y
-    dua_res .= max.(l, min.(u, y .+ Ax)) .- Ax
+    pri_res .= ρ .* (c .+ P * x .+ A'y)
+    dua_res .= (1 / ρ) .* (max.(l, min.(u, y .+ Ax)) .- Ax)
     nrm_pri = norm(pri_res)
     nrm_dua = norm(dua_res)
     if nrm_pri .> 1e-15
@@ -195,8 +201,8 @@ function forward_backward_error_oracle(qp::QuadraticProgram)
     end
     # Bit-vector containing the active indices.
     bv .= l .≤ (y + Ax) .≤ u
-    g[1:n] .= P * pri_res .+ A' * ((Int.(bv) .- 1) .* dua_res)
-    g[(n+1):end] .= A * pri_res .+ (bv .* dua_res)
+    g[1:n] .= ρ .* (P * pri_res) .+ (1 / ρ) .* (A' * ((Int.(bv) .- 1) .* dua_res))
+    g[(n+1):end] .= ρ .* (A * pri_res) .+ (1 / ρ) .* (bv .* dua_res)
     return (nrm_pri + nrm_dua, g)
   end
   return oracle_fn
@@ -402,6 +408,7 @@ function superpolyak_with_osqp(
   budget_weight::Float64 = 0.0,
   bundle_max_budget::Int = bundle_budget,
   bundle_step_threshold::Float64 = sqrt(ϵ_tol),
+  primal_dual_weight_updates::Bool = false,
   kwargs...
 )
   first_order_oracle = forward_backward_error_oracle(qp)
@@ -417,6 +424,8 @@ function superpolyak_with_osqp(
       ),
     )
   end
+  # Initialize primal-dual weight with 0.1 if updates are set, otherwise 1.0
+  primal_dual_weight = primal_dual_weight_updates ? 0.1 : 1.0
   # Create OSQP model
   osqp_model = setup_osqp_model(qp)
   z = z₀[:]
@@ -435,11 +444,13 @@ function superpolyak_with_osqp(
     Δ = fvals[end]
     η = ϵ_distance^(idx)
     target_tol = max(ϵ_decrease * Δ, ϵ_tol)
+    # Oracle function that uses the new primal-dual weight.
+    oracle_fn = x -> first_order_oracle(x, primal_dual_weight)
     # Remaining budget for the bundle method. If loss is not below threshold yet,
     # do not attempt a bundle step.
     budget_rem = (Δ ≤ bundle_step_threshold) ? min(current_budget, oracle_calls_limit - sum(oracle_calls)) : 0
     bundle_stats = @timed bundle_step, bundle_calls =
-      build_bundle_wv(first_order_oracle, z, η, 0.0, η_est, budget_rem)
+      build_bundle_wv(oracle_fn, z, η, 0.0, η_est, budget_rem)
     cumul_time += bundle_stats.time - bundle_stats.gctime
     # Adjust η_est if the bundle step did not satisfy the descent condition.
     bundle_loss = isnothing(bundle_step) ? Δ : f(bundle_step)
@@ -465,6 +476,11 @@ function superpolyak_with_osqp(
         ϵ_rel,
       )
       copyto!(z, fallback_result.sol[1:end])
+      # Update primal-dual weight with the scale estimate from OSQP.
+      if primal_dual_weight_updates
+        @info "Updating primal-dual weight to $(fallback_result.scale)"
+        primal_dual_weight = fallback_result.scale
+      end
       fallback_calls = fallback_result.iter
       current_budget = update_budget(
         current_budget,

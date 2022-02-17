@@ -24,6 +24,7 @@ function run_experiment(
   bundle_step_threshold::Float64,
   oracle_calls_limit::Int,
   exit_frequency::Int,
+  primal_dual_weight_updates::Bool,
 )
   problem = read_problem_from_qps_file(filename, :fixed)
   m, n = size(problem.A)
@@ -60,6 +61,7 @@ function run_experiment(
     budget_weight = budget_weight,
     bundle_max_budget = bundle_max_budget,
     bundle_step_threshold = bundle_step_threshold,
+    primal_dual_weight_updates = primal_dual_weight_updates,
   )
   df_osqp = save_superpolyak_result(
     "qp_$(filename_noext(filename))_osqp.csv",
@@ -107,6 +109,9 @@ settings = add_base_options(settings)
   arg_type = Int
   help = "The total number of oracle calls allowed."
   default = 100000
+  "--primal-dual-weight-updates"
+  help = "Set to allow primal-dual weight updates."
+  action = "store_true"
   "--eps-rel"
   arg_type = Float64
   help = "The relative tolerance used in calculations."
@@ -129,4 +134,5 @@ run_experiment(
   args["bundle-step-threshold"],
   args["oracle-calls-limit"],
   args["exit-frequency"],
+  args["primal-dual-weight-updates"],
 )
