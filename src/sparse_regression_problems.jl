@@ -50,10 +50,7 @@ function subgradient(
   problem::LassoProblem,
   τ::Float64 = 0.95 / (opnorm(problem.A)^2),
 )
-  d = size(problem.A, 2)
-  # Define function here.
-  compiled_loss_tape = compile(GradientTape(loss(problem), rand(d)))
-  return z -> gradient!(compiled_loss_tape, z)
+  return z -> gradient(loss(problem, τ), z)[1]
 end
 
 """

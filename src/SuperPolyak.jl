@@ -4,9 +4,9 @@ import ElasticArrays: ElasticMatrix
 import IterativeSolvers: lsqr!
 import LinearAlgebra
 import LinearMaps: LinearMap
-import ReverseDiff: GradientTape, gradient!, compile
 import SparseArrays: nnz, sparse
 import StatsBase: sample
+import Zygote: gradient
 
 const Diagonal = LinearAlgebra.Diagonal
 const Factorization = LinearAlgebra.Factorization
@@ -23,6 +23,11 @@ const UpperTriangular = LinearAlgebra.UpperTriangular
 include("problems.jl")
 include("sparse_regression_problems.jl")
 include("qrinsert.jl")
+
+struct PolyakSGMResult
+  solution::AbstractVector{Float64}
+  calls::Int
+end
 
 """
   polyak_sgm(f::Function, gradf::Function, x₀::Vector{Float64}; ϵ::Float64 = (f(x_0) / 2), min_f::Float64 = 0.0)
@@ -43,7 +48,7 @@ function polyak_sgm(
     g = gradf(x)
     x -= (f(x) - min_f) * g / (norm(g)^2)
     oracle_calls += 1
-    ((f(x) - min_f) ≤ ϵ) && return x, oracle_calls
+    ((f(x) - min_f) ≤ ϵ) && return PolyakSGMResult(x, oracle_calls)
   end
 end
 
@@ -89,7 +94,7 @@ function subgradient_method(
     push!(fvals, f(x) - min_f)
     push!(elapsed_time, stats.time - stats.gctime)
   end
-  return x, fvals, oracle_calls, elapsed_time
+  return (solution=x, gap=fvals, calls=oracle_calls, elapsed=elapsed_time)
 end
 
 """
@@ -126,9 +131,9 @@ function fallback_algorithm(
     push!(elapsed_time, stats.time - stats.gctime)
   end
   if (record_loss)
-    return x, fvals, oracle_calls, elapsed_time
+    return (solution=x, gap=fvals, calls=oracle_calls, elapsed=elapsed_time)
   else
-    return x, oracle_calls, elapsed_time
+    return (solution=x, calls=oracle_calls, elapsed=elapsed_time)
   end
 end
 
@@ -470,8 +475,10 @@ function superpolyak(
       if (!isnothing(bundle_step)) && ((f(bundle_step) - min_f) < Δ)
         copyto!(x, bundle_step)
       end
-      fallback_stats = @timed x, fallback_calls =
+      fallback_stats = @timed fallback_results =
         fallback_alg(f, gradf, x, target_tol, min_f)
+      x = fallback_results.solution
+      fallback_calls = fallback_results.calls
       cumul_time += fallback_stats.time - fallback_stats.gctime
       # Include the number of oracle calls made by the failed bundle step.
       push!(oracle_calls, fallback_calls + bundle_calls)

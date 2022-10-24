@@ -27,9 +27,7 @@ Return a callable that computes a subgradient of the robust ℓ₁ loss for a ph
 retrieval problem.
 """
 function subgradient(problem::PhaseRetrievalProblem)
-  d = size(problem.A, 2)
-  compiled_loss_tape = compile(GradientTape(loss(problem), rand(d)))
-  return z -> gradient!(compiled_loss_tape, z)
+  return z -> gradient(loss(problem), z)[1]
 end
 
 """
@@ -178,9 +176,7 @@ function loss(problem::QuadraticSensingProblem)
 end
 
 function subgradient(problem::QuadraticSensingProblem)
-  d, r = size(problem.X)
-  compiled_loss_tape = compile(GradientTape(loss(problem), rand(d * r)))
-  return z -> gradient!(compiled_loss_tape, z)
+  return z -> gradient(loss(problem), z)[1]
 end
 
 function initializer(problem::QuadraticSensingProblem, δ::Float64)
@@ -244,9 +240,7 @@ vector containing the "flattened" version of the matrix `[W, X]`, where `W` and
 `X` are `d × r` matrices.
 """
 function subgradient(problem::BilinearSensingProblem)
-  d, r = size(problem.W)
-  compiled_loss_tape = compile(GradientTape(loss(problem), rand(2 * d * r)))
-  return z -> gradient!(compiled_loss_tape, z)
+  return z -> gradient(loss(problem), z)[1]
 end
 
 """
@@ -313,9 +307,7 @@ Return a callable that computes a subgradient of the ℓ₁ robust loss for a Re
 regression problem.
 """
 function subgradient(problem::ReluRegressionProblem)
-  d = size(problem.A, 2)
-  compiled_loss_tape = compile(GradientTape(loss(problem), rand(d)))
-  return z -> gradient!(compiled_loss_tape, z)
+  return z -> gradient(loss(problem), z)[1]
 end
 
 """
@@ -370,9 +362,7 @@ Return a callable that computes a subgradient of the ℓ₁ robust loss for a
 max-linear regression problem.
 """
 function subgradient(problem::MaxAffineRegressionProblem)
-  d, k = size(problem.βs)
-  compiled_loss_tape = compile(GradientTape(loss(problem), rand(d * k)))
-  return z -> gradient!(compiled_loss_tape, z)
+  return z -> gradient(loss(problem), z)[1]
 end
 
 """

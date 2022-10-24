@@ -43,7 +43,7 @@ function run_experiment(
       x₀ = SuperPolyak.proximal_gradient(problem, x₀, τ)
       it += 1
       if loss(x₀) < ϵ
-        return x₀, it
+        return (solution=x₀, calls=it)
       end
     end
   end
