@@ -31,6 +31,9 @@ function run_experiment(
   loss_fn = SuperPolyak.loss(problem)
   grad_fn = SuperPolyak.subgradient(problem)
   z_init = SuperPolyak.initializer(problem, δ)
+  # Run grad_fn() once to avoid compilation latency
+  @info "Precompiling grad_fn..."
+  grad_fn(z_init)
   @info "Running subgradient method..."
   _, loss_history_polyak, oracle_calls_polyak, elapsed_time_polyak =
     SuperPolyak.subgradient_method(loss_fn, grad_fn, z_init[:], ϵ_tol)
