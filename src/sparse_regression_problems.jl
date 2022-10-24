@@ -89,3 +89,65 @@ end
 function initializer(problem::LassoProblem, δ::Float64)
   return problem.x + δ * normalize(randn(length(problem.x)))
 end
+
+"""
+  GenerativeSensingProblem
+
+A problem with measurements
+
+  yᵢ = A ⋅ G(x),
+
+where A is a random Gaussian matrix and G is a ReLU network with user-provided
+hidden layer sizes.
+"""
+struct GenerativeSensingProblem
+  A::Matrix{Float64}
+  x::Vector{Float64}
+  y::Vector{Float64}
+  # Matrices of each hidden layer.
+  Ws::Vector{Matrix{Float64}}
+end
+
+"""
+  generative_sensing_problem(m::Int, k::Int, hidden_layers::Vector{Int})
+
+Create a generative sensing problem with `m` measurements, latent signal of
+dimension `k`, and a number of hidden layer sizes given by `hidden_layers`.
+"""
+function generative_sensing_problem(m::Int, k::Int, hidden_layers::Vector{Int})
+  Ws = [(1 / sqrt(hidden_layers[i])) * randn(hidden_layers[i], hidden_layers[i+1])
+        for i in 1:(length(hidden_layers) - 1)]
+  push!(Ws, (1 / sqrt(hidden_layers[end])) * randn(hidden_layers[end], k))
+  x = normalize(randn(k))
+  A = randn(m, hidden_layers[1])
+  y = x[:]
+  for W in reverse(Ws)
+    y = max.(W * y, 0.0)
+  end
+  return GenerativeSensingProblem(A, x, A * y, Ws)
+end
+
+function generative_model_output(
+  problem::GenerativeSensingProblem,
+  z::AbstractVector{Float64},
+)
+  y_temp = z[:]
+  for W in reverse(problem.Ws)
+    y_temp = max.(W * y_temp, 0.0)
+  end
+  return y_temp
+end
+
+function loss(problem::GenerativeSensingProblem)
+  A = problem.A
+  y = problem.y
+  return z -> (1 / length(y)) * norm(A * generative_model_output(problem, z) .- y, 1)
+end
+
+function subgradient(problem::GenerativeSensingProblem)
+  return z -> gradient(loss(problem), z)[1]
+end
+
+function initializer(problem::GenerativeSensingProblem, δ::Float64)
+  return problem.x + δ * normalize(randn(size(problem.x)))
+end
