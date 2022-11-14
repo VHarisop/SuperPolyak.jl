@@ -463,3 +463,82 @@ with normalized distance `δ` from the ground truth.
 function initializer(problem::CompressedSensingProblem, δ::Float64)
   return problem.x + δ * normalize(randn(length(problem.x)))
 end
+
+struct LogisticRegressionProblem
+  A::Matrix{Float64}
+  x::Vector{Float64}
+  y::Vector{Int}
+  σ::Float64
+  λ::Float64
+end
+
+"""
+  loss(problem::LogisticRegressionProblem)
+
+Return a callable that implements the loss of a logistic regression problem.
+"""
+function loss(problem::LogisticRegressionProblem)
+  A = problem.A
+  y = problem.y
+  λ = problem.λ
+  return z -> mean(log.(1 .+ exp.(-y .* A * z))) + (λ / 2) * sum(z.^2)
+end
+
+function _subgradient_norm(problem::LogisticRegressionProblem)
+  A = problem.A
+  y = problem.y
+  λ = problem.λ
+  m = size(A, 1)
+  fn(w::AbstractVector{Float64}) = begin
+    exp_prod = exp.(-y .* (A * w))
+    return norm(λ .* w .- (1 / m) * A' * ((y .* exp_prod) ./ (1 .+ exp_prod)))
+  end
+  return fn
+end
+
+"""
+  subgradient(problem::LogisticRegressionProblem)
+
+Return a callable that implements the gradient of the logistic regression loss
+for a problem with `ℓ₂` regularization.
+"""
+function subgradient(problem::LogisticRegressionProblem)
+  A = problem.A
+  y = problem.y
+  λ = problem.λ
+  m = size(A, 1)
+  grad_fn(w::AbstractVector{Float64}) = begin
+    products = -y .* (A * w)
+    return λ .* w .- (1 / m) * A' * ((y .* exp.(products)) ./ (1 .+ exp.(products)))
+  end
+  return grad_fn
+end
+
+"""
+  loss_subgradient(problem::LogisticRegressionProblem)
+
+Return a callable implementing a subgradient of the **norm** of the gradient of
+the logistic regression loss.
+"""
+function loss_subgradient(problem::LogisticRegressionProblem)
+  return w -> gradient(_subgradient_norm(problem), w)[1]
+end
+
+"""
+  logistic_regression_problem(d::Int, m::Int, σ::Float64, λ::Float64)
+
+Return an instance of a `LogisticRegressionProblem` in `d` dimensions with `m`
+measurements, added noise with standard deviation `σ`, and `ℓ₂`-regularization
+with coefficient `λ`.
+"""
+function logistic_regression_problem(d::Int, m::Int, σ::Float64, λ::Float64)
+  A = Matrix(qr(randn(d, m)').Q)
+  x = randn(d)
+  return LogisticRegressionProblem(
+    A,
+    x,
+    [z > 0 ? 1 : -1 for z in A * x + σ * randn(m)],
+    σ,
+    λ,
+  )
+end

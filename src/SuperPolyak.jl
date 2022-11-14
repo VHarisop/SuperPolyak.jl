@@ -5,7 +5,7 @@ import IterativeSolvers: lsqr!
 import LinearAlgebra
 import LinearMaps: LinearMap
 import SparseArrays: nnz, sparse
-import StatsBase: sample
+import StatsBase: mean, sample
 import Zygote: gradient
 
 const Diagonal = LinearAlgebra.Diagonal
