@@ -24,10 +24,6 @@ include("problems.jl")
 include("sparse_regression_problems.jl")
 include("qrinsert.jl")
 
-struct PolyakSGMResult
-  solution::AbstractVector{Float64}
-  calls::Int
-end
 
 """
   polyak_sgm(f::Function, gradf::Function, x₀::Vector{Float64}; ϵ::Float64 = (f(x_0) / 2), min_f::Float64 = 0.0)
@@ -48,23 +44,8 @@ function polyak_sgm(
     g = gradf(x)
     x -= (f(x) - min_f) * g / (norm(g)^2)
     oracle_calls += 1
-    ((f(x) - min_f) ≤ ϵ) && return PolyakSGMResult(x, oracle_calls)
+    ((f(x) - min_f) ≤ ϵ) && return (solution=x, calls=oracle_calls)
   end
-end
-
-"""
-  polyak_step(f::Function, gradf::Function, x::Vector{Float64}, min_f::Float64 = 0.0)
-
-Run a single polyak step to minimize `f` starting at `x`.
-"""
-function polyak_step(
-  f::Function,
-  gradf::Function,
-  x::Vector{Float64},
-  min_f::Float64 = 0.0,
-)
-  g = gradf(x)
-  return x - (f(x) - min_f) * g / (norm(g)^2)
 end
 
 """
