@@ -187,6 +187,104 @@ function build_bundle_lsqr(
 end
 
 """
+  build_stochastic_bundle_wv(f::Function, gradf::Function, y₀::Vector{Float64},
+                             η::Float64, min_f::Float64, η_est::Float64,
+                             bundle_batch:Int)
+
+An efficient version of the BuildBundle algorithm using an incrementally updated
+QR algorithm based on the compact WV representation. This function assumes that
+`f` and `gradf` are stochastic and picks the next element to add in the bundle
+by collecting `bundle_batch` subgradients and adding the one with the smallest
+projection onto the rowspace of the bundle matrix.
+"""
+function build_stochastic_bundle_wv(
+  oracle::Function,
+  y₀::Vector{Float64},
+  η::Float64,
+  min_f::Float64,
+  η_est::Float64,
+  bundle_batch::Int,
+)
+  d = length(y₀)
+  bvect = zeros(d)
+  fvals = zeros(d)
+  resid = zeros(d)
+  batch = zeros(d, bundle_batch)
+  norms = zeros(bundle_batch)
+  cands = zeros(bundle_batch)
+  y = y₀[:]
+  # To obtain a solution equivalent to applying the pseudoinverse, we use the
+  # QR factorization of the transpose of the bundle matrix. This is because the
+  # minimum-norm solution to Ax = b when A is full row rank can be found via the
+  # QR factorization of Aᵀ.
+  fval, grad = oracle(y)
+  copyto!(bvect, grad[:])
+  fvals[1] = fval - min_f + bvect' * (y₀ - y)
+  # Initialize Q and R
+  Q, R = wv_from_vector(bvect)
+  y = y₀ - bvect' \ fvals[1]
+  Δ = fval - min_f
+  # Exit early if solution escaped ball.
+  if norm(y - y₀) > η * Δ
+    return nothing, 1
+  end
+  # Best solution and function value found so far.
+  y_best = y₀[:]
+  f_best = fval
+  # Cache right-hand side vector.
+  qr_rhs = zero(y)
+  for bundle_idx in 2:d
+    fval, _ = oracle(y)
+    resid[bundle_idx - 1] = fval
+    # Generate `bundle_batch` candidates and pick the one that is most
+    # orthogonal to the rowspace of Aᵀ.
+    @inbounds for i in 1:bundle_batch
+      fval, grad = oracle(y)
+      batch[:, i] = grad[:]
+      cands[i] = fval
+      norms[i] = proj_col_span(Q, normalize(batch[:, i]))
+    end
+    # Settle on gradient and function value at y.
+    idx_next = argmin(norms)
+    copyto!(bvect, batch[:, idx_next])
+    resid[bundle_idx-1] = cands[idx_next]
+    # Terminate early if function value decreased significantly.
+    if (Δ < 0.5) && (resid[bundle_idx - 1] < Δ^(1 + η_est))
+      return y, bundle_idx
+    end
+    # Otherwise, update best solution so far.
+    if (resid[bundle_idx - 1] < f_best)
+      copyto!(y_best, y)
+      f_best = resid[bundle_idx]
+    end
+    # Invariant: resid[bundle_idx - 1] = f(y) - min_f.
+    fvals[bundle_idx] = resid[bundle_idx-1] + bvect' * (y₀ - y)
+    # Update the QR decomposition of A' after forming [A' bvect].
+    # Q is updated in-place.
+    qrinsert_wv!(Q, R, bvect)
+    # Terminate early if rank-deficient.
+    # size(R) = (d, bundle_idx).
+    if R[bundle_idx, bundle_idx] < 1e-15
+      @debug "Stopping (idx=$(bundle_idx)) - reason: rank-deficient A"
+      y = y₀ - Matrix(Q * R)' \ view(fvals, 1:bundle_idx)
+      return (norm(y - y₀) ≤ η * Δ ? y : y_best), bundle_idx
+    end
+    # Update y by solving the system Q * (inv(R)'fvals).
+    # Cost: O(d * bundle_idx)
+    Rupper = view(R, 1:bundle_idx, 1:bundle_idx)
+    qr_rhs[1:bundle_idx] = Rupper' \ fvals[1:bundle_idx]
+    y = y₀ - Q * qr_rhs
+    # Terminate early if new point escaped ball around y₀.
+    if (norm(y - y₀) > η * Δ)
+      @debug "Stopping at idx = $(bundle_idx) - reason: diverging"
+      return y_best, bundle_idx
+    end
+  end
+  return y_best, d
+end
+
+
+"""
   build_bundle_wv(f::Function, gradf::Function, y₀::Vector{Float64}, η::Float64, min_f::Float64, η_est::Float64)
 
 An efficient version of the BuildBundle algorithm using an incrementally updated

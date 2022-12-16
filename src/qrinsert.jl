@@ -73,6 +73,7 @@ end
 Base.:*(Q::CompactWV, v::AbstractVector{Float64}) = v - Q.W * (Q.V'v)
 Base.:*(Q::CompactWV, M::AbstractMatrix{Float64}) = M - Q.W * (Q.V'M)
 Base.adjoint(Q::CompactWV) = CompactWV(Q.V, Q.W)
+Base.size(Q::CompactWV) = size(Q.W)
 
 """
   update_compact_wv!(Q::CompactWV, v::Vector{Float64}, λ::Float64)
@@ -108,7 +109,6 @@ function qrinsert_wv!(
   append!(R, [w[1:n]; β; zeros(d - n - 1)])
 end
 
-
 """
   wv_from_vector(v::Vector{Float64})
 
@@ -121,4 +121,28 @@ function wv_from_vector(v::Vector{Float64})
   R = ElasticMatrix(zeros(d, 1))
   R[1, 1] = β
   return CompactWV(ElasticMatrix(2 * q[:, :]), ElasticMatrix(q[:, :])), R
+end
+
+"""
+  proj_col_span(A::AbstractMatrix{Float64}, v::Vector{Float64})
+
+Project the vector `v` onto the column span of the matrix `A`. This function
+assumes that `A'A` is invertible.
+"""
+function proj_col_span(A::AbstractMatrix{Float64}, v::Vector{Float64})
+  return A * ((A'A) \ (A'v))
+end
+
+"""
+  proj_col_span(Q::CompactWV, v::Vector{Float64})
+
+Project the vector `v` onto the column span of the matrix `A = QR`, where the
+orthogonal factor `Q` is given in a compact WV representation.
+"""
+function proj_col_span(
+  Q::CompactWV,
+  v::Vector{Float64},
+)
+  d, r = size(Q)
+  return Q * [v[1:r] - Q.V[1:r, :] * (Q.W'v); zeros(d - r)] 
 end
