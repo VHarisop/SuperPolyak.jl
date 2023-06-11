@@ -4,6 +4,7 @@ import ElasticArrays: ElasticMatrix
 import IterativeSolvers: lsqr!
 import LinearAlgebra
 import LinearMaps: LinearMap
+import Roots
 import SparseArrays: nnz, sparse
 import StatsBase: sample
 import Zygote: gradient
@@ -74,6 +75,53 @@ function subgradient_method(
     oracle_calls += 1
     push!(fvals, f(x) - min_f)
     push!(elapsed_time, stats.time - stats.gctime)
+  end
+  return (solution=x, gap=fvals, calls=oracle_calls, elapsed=elapsed_time)
+end
+
+"""
+  accelerated_subgradient_method(f::Function, gradf::Function, x₀::Vector{Float64},
+                                 ϵ::Float64 = 1e-15, min_f::Float64 = 0.0; λ::Float64 = 0.1,
+                                 max_iter::Int = 1000)
+
+Run the subgradient method with Polyak stepsize and Nesterov acceleration
+until the function value drops below `ϵ`.
+Return the final iterate, the history of function values among iterates, and
+the total number of calls to the subgradient oracle.
+"""
+function accelerated_subgradient_method(
+  f::Function,
+  gradf::Function,
+  x₀::Vector{Float64},
+  ϵ::Float64 = 1e-15,
+  min_f::Float64 = 0.0;
+  λ::Float64 = 0.1,
+  m::Int = 1,
+  max_iter::Int = 1000
+)
+  x = x₀[:]
+  v = x₀[:]
+  γ = 0
+  fvals = [f(x₀)]
+  oracle_calls = 0
+  elapsed_time = [0.0]
+  for it in 1:max_iter
+    if fvals[end] - min_f ≤ ϵ
+      return (solution=x, gap=fvals, calls=oracle_calls, elapsed=elapsed_time)
+    end
+    stats = @timed begin
+      γ = 0.5 * (((1 - λ) / m) + sqrt(((1 - λ) / m)^2 + 4))
+      α = (m - γ * λ) / (γ * (m^2 - λ))
+      β = 1 - (γ * λ / m)
+      y = α * v + (1 - α) * x
+      g = gradf(y)
+      x = y - (f(y) - min_f) * g / (norm(g)^2)
+      v = β * v + (1 - β) * y - γ * (f(x) - min_f) * g / (norm(g)^2)
+    end
+    oracle_calls += 1
+    push!(fvals, f(x) - min_f)
+    push!(elapsed_time, stats.time - stats.gctime)
+    @info "it=$(it), f(x)=$(fvals[end])"
   end
   return (solution=x, gap=fvals, calls=oracle_calls, elapsed=elapsed_time)
 end
