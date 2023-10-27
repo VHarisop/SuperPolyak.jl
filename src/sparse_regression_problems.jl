@@ -115,8 +115,10 @@ Create a generative sensing problem with `m` measurements, latent signal of
 dimension `k`, and a number of hidden layer sizes given by `hidden_layers`.
 """
 function generative_sensing_problem(m::Int, k::Int, hidden_layers::Vector{Int})
-  Ws = [(1 / sqrt(hidden_layers[i])) * randn(hidden_layers[i], hidden_layers[i+1])
-        for i in 1:(length(hidden_layers) - 1)]
+  Ws = [
+    (1 / sqrt(hidden_layers[i])) * randn(hidden_layers[i], hidden_layers[i+1]) for
+    i in 1:(length(hidden_layers)-1)
+  ]
   push!(Ws, (1 / sqrt(hidden_layers[end])) * randn(hidden_layers[end], k))
   x = normalize(randn(k))
   A = randn(m, hidden_layers[1])
@@ -141,7 +143,8 @@ end
 function loss(problem::GenerativeSensingProblem)
   A = problem.A
   y = problem.y
-  return z -> (1 / length(y)) * norm(A * generative_model_output(problem, z) .- y, 1)
+  return z ->
+    (1 / length(y)) * norm(A * generative_model_output(problem, z) .- y, 1)
 end
 
 function subgradient(problem::GenerativeSensingProblem)

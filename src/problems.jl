@@ -125,7 +125,7 @@ function alternating_projections_step(problem::PhaseRetrievalProblem)
   step_fn(z::AbstractVector) = begin
     phased = phase(A * (F \ (z[1:m] + z[(m+1):end] * im)))
     return [
-      y .* real.(phased);
+      y .* real.(phased)
       y .* imag.(phased)
     ]
   end

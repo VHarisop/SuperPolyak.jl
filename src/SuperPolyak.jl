@@ -45,7 +45,7 @@ function polyak_sgm(
     g = gradf(x)
     x -= (f(x) - min_f) * g / (norm(g)^2)
     oracle_calls += 1
-    ((f(x) - min_f) ≤ ϵ) && return (solution=x, calls=oracle_calls)
+    ((f(x) - min_f) ≤ ϵ) && return (solution = x, calls = oracle_calls)
   end
 end
 
@@ -76,7 +76,12 @@ function subgradient_method(
     push!(fvals, f(x) - min_f)
     push!(elapsed_time, stats.time - stats.gctime)
   end
-  return (solution=x, gap=fvals, calls=oracle_calls, elapsed=elapsed_time)
+  return (
+    solution = x,
+    gap = fvals,
+    calls = oracle_calls,
+    elapsed = elapsed_time,
+  )
 end
 
 """
@@ -97,7 +102,7 @@ function accelerated_subgradient_method(
   min_f::Float64 = 0.0;
   λ::Float64 = 0.1,
   m::Int = 1,
-  max_iter::Int = 1000
+  max_iter::Int = 1000,
 )
   x = x₀[:]
   v = x₀[:]
@@ -107,7 +112,12 @@ function accelerated_subgradient_method(
   elapsed_time = [0.0]
   for it in 1:max_iter
     if fvals[end] - min_f ≤ ϵ
-      return (solution=x, gap=fvals, calls=oracle_calls, elapsed=elapsed_time)
+      return (
+        solution = x,
+        gap = fvals,
+        calls = oracle_calls,
+        elapsed = elapsed_time,
+      )
     end
     stats = @timed begin
       γ = 0.5 * (((1 - λ) / m) + sqrt(((1 - λ) / m)^2 + 4))
@@ -123,7 +133,12 @@ function accelerated_subgradient_method(
     push!(elapsed_time, stats.time - stats.gctime)
     @info "it=$(it), f(x)=$(fvals[end])"
   end
-  return (solution=x, gap=fvals, calls=oracle_calls, elapsed=elapsed_time)
+  return (
+    solution = x,
+    gap = fvals,
+    calls = oracle_calls,
+    elapsed = elapsed_time,
+  )
 end
 
 """
@@ -160,9 +175,14 @@ function fallback_algorithm(
     push!(elapsed_time, stats.time - stats.gctime)
   end
   if (record_loss)
-    return (solution=x, gap=fvals, calls=oracle_calls, elapsed=elapsed_time)
+    return (
+      solution = x,
+      gap = fvals,
+      calls = oracle_calls,
+      elapsed = elapsed_time,
+    )
   else
-    return (solution=x, calls=oracle_calls, elapsed=elapsed_time)
+    return (solution = x, calls = oracle_calls, elapsed = elapsed_time)
   end
 end
 
@@ -504,8 +524,8 @@ function superpolyak(
       if (!isnothing(bundle_step)) && ((f(bundle_step) - min_f) < Δ)
         copyto!(x, bundle_step)
       end
-      fallback_stats = @timed fallback_results =
-        fallback_alg(f, gradf, x, target_tol, min_f)
+      fallback_stats =
+        @timed fallback_results = fallback_alg(f, gradf, x, target_tol, min_f)
       x = fallback_results.solution
       fallback_calls = fallback_results.calls
       cumul_time += fallback_stats.time - fallback_stats.gctime

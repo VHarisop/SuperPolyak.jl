@@ -43,7 +43,10 @@ function run_experiment(
     cumul_oracle_calls = 0:oracle_calls_polyak,
     cumul_elapsed_time = cumsum(elapsed_time_polyak),
   )
-  CSV.write("generative_sensing_$(m)_$(k)_$(integer_list_to_str(hidden_layers))_polyak.csv", df_polyak)
+  CSV.write(
+    "generative_sensing_$(m)_$(k)_$(integer_list_to_str(hidden_layers))_polyak.csv",
+    df_polyak,
+  )
   @info "Running SuperPolyak..."
   result = SuperPolyak.superpolyak(
     loss_fn,
