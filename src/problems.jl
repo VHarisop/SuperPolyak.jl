@@ -463,3 +463,30 @@ with normalized distance `δ` from the ground truth.
 function initializer(problem::CompressedSensingProblem, δ::Float64)
   return problem.x + δ * normalize(randn(length(problem.x)))
 end
+
+
+struct ComputedTomographyProblem
+  A::AbstractMatrix{Float64}
+  y::Vector{Float64}
+  x::Vector{Float64}
+end
+
+
+function computed_tomography_problem(m::Int, d::Int)
+  A = randn(m, d)
+  x = normalize(rand(d))
+  return ComputedTomographyProblem(A, 1 .- exp.(-max.(A * x, 0.0)), x)
+end
+
+
+function loss(problem::ComputedTomographyProblem)
+  m = length(problem.y)
+  A = problem.A
+  y = problem.y
+  return z -> (1 / m) * norm(1 .- exp.(-max.(A * z, 0.0)) .- y, 1)
+end
+
+
+function subgradient(problem::ComputedTomographyProblem)
+  return z -> gradient(loss(problem), z)[1]
+end
