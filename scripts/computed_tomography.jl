@@ -18,6 +18,7 @@ function run_experiment(
   η_est,
   η_lb,
   bundle_system_solver,
+  bundle_size,
   no_amortized,
   plot_inline,
 )
@@ -46,6 +47,7 @@ function run_experiment(
     η_est = η_est,
     η_lb = η_lb,
     bundle_system_solver = bundle_system_solver,
+    bundle_size = bundle_size,
   )
   df_bundle = save_superpolyak_result(
     "computed_tomography_$(m)_$(d)_bundle.csv",
@@ -73,6 +75,10 @@ settings = add_base_options(settings)
   arg_type = Int
   help = "The number of measurements."
   default = 1500
+  "--bundle-size"
+  arg_type = Int
+  help = "The size of the bundle."
+  default = 100
   "--plot-inline"
   help = "Set to plot the results after running the script."
   action = :store_true
@@ -89,6 +95,7 @@ run_experiment(
   args["eta-est"],
   args["eta-lb"],
   args["bundle-system-solver"],
+  args["bundle-size"],
   args["no-amortized"],
   args["plot-inline"],
 )

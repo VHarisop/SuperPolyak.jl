@@ -4,7 +4,6 @@ import ElasticArrays: ElasticMatrix
 import IterativeSolvers: lsqr!
 import LinearAlgebra
 import LinearMaps: LinearMap
-import Roots
 import SparseArrays: nnz, sparse
 import StatsBase: sample
 import Zygote: gradient
@@ -187,7 +186,7 @@ function fallback_algorithm(
 end
 
 """
-  build_bundle_lsqr(f::Function, gradf::Function, y₀::Vector{Float64}, η::Float64, min_f::Float64, η_est::Float64)
+  build_bundle_lsqr(f::Function, gradf::Function, y₀::Vector{Float64}, η::Float64, min_f::Float64, η_est::Float64, bundle_size::Int)
 
 An efficient version of the BuildBundle algorithm using the LSQR linear system
 solver for the quadratic subproblems.
@@ -199,6 +198,7 @@ function build_bundle_lsqr(
   η::Float64,
   min_f::Float64,
   η_est::Float64,
+  bundle_size::Int,
 )
   d = length(y₀)
   fvals = zeros(d)
@@ -220,7 +220,7 @@ function build_bundle_lsqr(
   f_best = resid[1]
   # Difference dy for the normal equations.
   dy = y - y₀
-  for bundle_idx in 2:d
+  for bundle_idx in 2:bundle_size
     append!(bmtrx, gradf(y))
     # Invariant: resid[bundle_idx - 1] = f(y) - min_f.
     fvals[bundle_idx] = resid[bundle_idx-1] + bmtrx[:, bundle_idx]' * (y₀ - y)
@@ -251,11 +251,11 @@ function build_bundle_lsqr(
       f_best = resid[bundle_idx]
     end
   end
-  return y_best, d
+  return y_best, bundle_size
 end
 
 """
-  build_bundle_wv(f::Function, gradf::Function, y₀::Vector{Float64}, η::Float64, min_f::Float64, η_est::Float64)
+  build_bundle_wv(f::Function, gradf::Function, y₀::Vector{Float64}, η::Float64, min_f::Float64, η_est::Float64, bundle_size::Int)
 
 An efficient version of the BuildBundle algorithm using an incrementally updated
 QR algorithm based on the compact WV representation.
@@ -267,6 +267,7 @@ function build_bundle_wv(
   η::Float64,
   min_f::Float64,
   η_est::Float64,
+  bundle_size::Int,
 )
   d = length(y₀)
   bvect = zeros(d)
@@ -293,7 +294,7 @@ function build_bundle_wv(
   f_best = resid[1]
   # Cache right-hand side vector.
   qr_rhs = zero(y)
-  for bundle_idx in 2:d
+  for bundle_idx in 2:bundle_size
     copyto!(bvect, gradf(y))
     # Invariant: resid[bundle_idx - 1] = f(y) - min_f.
     fvals[bundle_idx] = resid[bundle_idx-1] + bvect' * (y₀ - y)
@@ -328,11 +329,11 @@ function build_bundle_wv(
       f_best = resid[bundle_idx]
     end
   end
-  return y_best, d
+  return y_best, bundle_size
 end
 
 """
-  build_bundle_qr(f::Function, gradf::Function, y₀::Vector{Float64}, η::Float64, min_f::Float64, η_est::Float64)
+  build_bundle_qr(f::Function, gradf::Function, y₀::Vector{Float64}, η::Float64, min_f::Float64, η_est::Float64, bundle_size::Int)
 
 An efficient version of the BuildBundle algorithm using an incrementally
 updated QR factorization. Total runtime is O(d³) instead of O(d⁴).
@@ -344,6 +345,7 @@ function build_bundle_qr(
   η::Float64,
   min_f::Float64,
   η_est::Float64,
+  bundle_size::Int,
 )
   d = length(y₀)
   bvect = zeros(d)
@@ -370,7 +372,7 @@ function build_bundle_qr(
   y_best = y[:]
   f_best = resid[1]
   @debug "bundle_idx = 1 - error: $(resid[1])"
-  for bundle_idx in 2:d
+  for bundle_idx in 2:bundle_size
     copyto!(bvect, gradf(y))
     fvals[bundle_idx] = f(y) - min_f + bvect' * (y₀ - y)
     # qrinsert!(Q, R, v): QR = Aᵀ and v is the column added.
@@ -407,7 +409,7 @@ function build_bundle_qr(
     end
     @debug "bundle_idx = $(bundle_idx) - error: $(resid[bundle_idx])"
   end
-  return y_best, d
+  return y_best, bundle_size
 end
 
 """
@@ -462,6 +464,7 @@ Arguments:
 - `bundle_system_solver::BundleSystemSolver = LSQR()`: The solver to use for the bundle system.
 - `η_est::Float64 = 1.0`: An estimate of the (b)-regularity constant.
 - `η_lb::Float64 = 0.1`: A lower bound on the estimate of the (b)-regularity constant.
+- `bundle_size::Int = length(x₀)`: The maximum size of the bundle.
 
 In the above, the product `ϵ_distance * ϵ_decrease` must be smaller than `1`
 for the algorithm to converge superlinearly.
@@ -482,6 +485,7 @@ function superpolyak(
   bundle_system_solver::BundleSystemSolver = LSQR(),
   η_est::Float64 = 1.0,
   η_lb::Float64 = 0.1,
+  bundle_size::Int = length(x₀),
   kwargs...,
 )
   if (ϵ_decrease ≥ 1) || (ϵ_decrease < 0)
@@ -510,7 +514,7 @@ function superpolyak(
     η = ϵ_distance^(idx)
     target_tol = max(ϵ_decrease * Δ, ϵ_tol)
     bundle_stats = @timed bundle_step, bundle_calls =
-      bundle_solver(f, gradf, x, η, min_f, η_est)
+      bundle_solver(f, gradf, x, η, min_f, η_est, bundle_size)
     cumul_time += bundle_stats.time - bundle_stats.gctime
     # Adjust η_est if the bundle step did not satisfy the descent condition.
     if !isnothing(bundle_step) &&
