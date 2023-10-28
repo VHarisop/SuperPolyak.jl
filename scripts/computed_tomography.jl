@@ -25,7 +25,7 @@ function run_experiment(
   problem = SuperPolyak.computed_tomography_problem(m, d)
   loss_fn = SuperPolyak.loss(problem)
   grad_fn = SuperPolyak.subgradient(problem)
-  x_init = LinearAlgebra.normalize(rand(d))
+  x_init = LinearAlgebra.normalize(fill(0.0, d) .+ 1e-15)
   @info "Running subgradient method..."
   _, loss_history_polyak, oracle_calls_polyak, elapsed_time_polyak =
     SuperPolyak.subgradient_method(loss_fn, grad_fn, x_init[:], ϵ_tol)

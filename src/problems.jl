@@ -488,5 +488,12 @@ end
 
 
 function subgradient(problem::ComputedTomographyProblem)
-  return z -> gradient(loss(problem), z)[1]
+  A = problem.A
+  y = problem.y
+  m = length(y)
+  return z -> begin
+    Az = A * z
+    r = 1 .- exp.(-max.(Az, 0.0)) .- y
+    return (1 / m) * A' * (sign.(r) .* exp.(-max.(Az, 0.0)) .* (Az .≥ 0))
+  end
 end
