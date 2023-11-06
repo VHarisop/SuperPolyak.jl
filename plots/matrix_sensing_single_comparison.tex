@@ -24,31 +24,23 @@
                anchor=west,
                name=oraclecalls,
                enlargelimits=false, xmax=4000,
-               legend cell align=left, legend pos=north east,
-               legend style={nodes={scale=1.0, transform shape}},
-               legend entries={{\texttt{SuperPolyak}},
-                               {\texttt{PolyakSGM}}}]
-  \addlegendimage{mark=square*, very thick, solid};
-  \addlegendimage{no markers, very thick, dashed};
-  \addplot[mark=square*, very thick, color=black] table[x=cumul_oracle_calls,y=fvals, col sep=comma]
+               legend cell align=left, legend pos=north east]
+  \addplot[mark=square*, very thick, color=mblue!85!black] table[x=cumul_oracle_calls,y=fvals, col sep=comma]
     {./matrix_sensing_32768_2_16_100_bundle.csv};
-  \addplot[no markers, very thick, dashed, color=black] table[x=cumul_oracle_calls,y=fvals, col sep=comma]
+  \addplot[no markers, very thick, dashed, color=mblue!85!black] table[x=cumul_oracle_calls,y=fvals, col sep=comma]
     {./matrix_sensing_32768_2_16_100_polyak.csv};
+  \legend{\texttt{SuperPolyak}, \texttt{PolyakSGM}};
 	\end{axis}
   \begin{axis}[xlabel={\textsf{Time (sec)}}, ylabel=$f(x_k) - f^{\ast}$, ymode=log,
                width=3.5in, height=3in,
                at=(oraclecalls.east), anchor=west, xshift=1in,
                enlargelimits=false, xmax=1000,
-               legend cell align=left, legend pos=north east,
-               legend style={nodes={scale=1.0, transform shape}},
-               legend entries={{\texttt{SuperPolyak}},
-                               {\texttt{PolyakSGM}}}]
-  \addlegendimage{mark=square*, very thick, solid};
-  \addlegendimage{no markers, very thick, dashed};
-  \addplot[mark=square*, very thick, color=black] table[x=cumul_elapsed_time,y=fvals, col sep=comma]
+               legend cell align=left, legend pos=north east]
+  \addplot[mark=square*, very thick, color=mblue!85!black] table[x=cumul_elapsed_time,y=fvals, col sep=comma]
     {./matrix_sensing_32768_2_16_100_bundle.csv};
-  \addplot[no markers, very thick, dashed, color=black] table[x=cumul_elapsed_time,y=fvals, col sep=comma]
+  \addplot[no markers, very thick, dashed, color=mblue!85!black] table[x=cumul_elapsed_time,y=fvals, col sep=comma]
     {./matrix_sensing_32768_2_16_100_polyak.csv};
+  \legend{\texttt{SuperPolyak}, \texttt{PolyakSGM}};
 	\end{axis}
 
 \end{tikzpicture}
