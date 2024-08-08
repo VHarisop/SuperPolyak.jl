@@ -464,20 +464,21 @@ function initializer(problem::CompressedSensingProblem, δ::Float64)
   return problem.x + δ * normalize(randn(length(problem.x)))
 end
 
-
 struct ComputedTomographyProblem
   A::AbstractMatrix{Float64}
   y::Vector{Float64}
   x::Vector{Float64}
 end
 
-
-function computed_tomography_problem(m::Int, d::Int)
+function computed_tomography_problem(
+  m::Int,
+  d::Int;
+  signal_scale::T = 1.0,
+) where {T<:Real}
   A = randn(m, d)
-  x = normalize(rand(d))
+  x = signal_scale * normalize(rand(d))
   return ComputedTomographyProblem(A, 1 .- exp.(-max.(A * x, 0.0)), x)
 end
-
 
 function loss(problem::ComputedTomographyProblem)
   m = length(problem.y)
@@ -485,7 +486,6 @@ function loss(problem::ComputedTomographyProblem)
   y = problem.y
   return z -> (1 / m) * norm(1 .- exp.(-max.(A * z, 0.0)) .- y, 1)
 end
-
 
 function subgradient(problem::ComputedTomographyProblem)
   A = problem.A

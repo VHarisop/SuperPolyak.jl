@@ -12,6 +12,7 @@ include("util.jl")
 function run_experiment(
   m,
   d,
+  signal_scale,
   ϵ_decrease,
   ϵ_distance,
   ϵ_tol,
@@ -22,7 +23,8 @@ function run_experiment(
   no_amortized,
   plot_inline,
 )
-  problem = SuperPolyak.computed_tomography_problem(m, d)
+  problem =
+    SuperPolyak.computed_tomography_problem(m, d, signal_scale = signal_scale)
   loss_fn = SuperPolyak.loss(problem)
   grad_fn = SuperPolyak.subgradient(problem)
   x_init = LinearAlgebra.normalize(fill(0.0, d) .+ 1e-15)
@@ -35,7 +37,10 @@ function run_experiment(
     cumul_oracle_calls = 0:oracle_calls_polyak,
     cumul_elapsed_time = cumsum(elapsed_time_polyak),
   )
-  CSV.write("computed_tomography_$(m)_$(d)_polyak.csv", df_polyak)
+  CSV.write(
+    "computed_tomography_$(m)_$(d)_$(signal_scale)_polyak.csv",
+    df_polyak,
+  )
   @info "Running SuperPolyak..."
   result = SuperPolyak.superpolyak(
     loss_fn,
@@ -50,7 +55,7 @@ function run_experiment(
     bundle_size = bundle_size,
   )
   df_bundle = save_superpolyak_result(
-    "computed_tomography_$(m)_$(d)_bundle.csv",
+    "computed_tomography_$(m)_$(d)_$(signal_scale)_bundle.csv",
     result,
     no_amortized,
   )
@@ -75,6 +80,10 @@ settings = add_base_options(settings)
   arg_type = Int
   help = "The number of measurements."
   default = 1500
+  "--signal-scale"
+  arg_type = Float64
+  help = "The scale of the unknown signal"
+  default = 1.0
   "--bundle-size"
   arg_type = Int
   help = "The size of the bundle."
@@ -89,6 +98,7 @@ Random.seed!(args["seed"])
 run_experiment(
   args["m"],
   args["d"],
+  args["signal-scale"],
   args["eps-decrease"],
   args["eps-distance"],
   args["eps-tol"],

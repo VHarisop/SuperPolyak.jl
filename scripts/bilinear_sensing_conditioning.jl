@@ -10,7 +10,6 @@ import SuperPolyak
 
 include("util.jl")
 
-
 function generate_problem(m::Int, d::Int, r::Int, κ::Int)
   L = randn(m, d)
   R = randn(m, d)

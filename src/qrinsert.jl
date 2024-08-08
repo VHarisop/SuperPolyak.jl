@@ -14,7 +14,6 @@ function householder(v::AbstractVector{Float64})
   return normalize(w), β
 end
 
-
 """
   rapply_givens!(A::Matrix{Float64}, G::LinearAlgebra.Givens)
 
@@ -107,7 +106,6 @@ function qrinsert_wv!(
   # Append the column to the R matrix.
   append!(R, [w[1:n]; β; zeros(d - n - 1)])
 end
-
 
 """
   wv_from_vector(v::Vector{Float64})

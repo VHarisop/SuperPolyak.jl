@@ -1,3 +1,5 @@
 indent = 2
 margin = 80
 always_for_in = true
+remove_extra_newlines = true
+whitespace_in_kwargs = true

@@ -24,7 +24,6 @@ include("problems.jl")
 include("sparse_regression_problems.jl")
 include("qrinsert.jl")
 
-
 """
   polyak_sgm(f::Function, gradf::Function, x₀::Vector{Float64}; ϵ::Float64 = (f(x_0) / 2), min_f::Float64 = 0.0)
 
@@ -282,7 +281,7 @@ function build_bundle_wv(
   fvals[1] = f(y) - min_f + bvect' * (y₀ - y)
   # Initialize Q and R
   Q, R = wv_from_vector(bvect)
-  y = y₀ - bvect' \ fvals[1]
+  y = y₀ - bvect' \ [fvals[1]]
   resid[1] = f(y) - min_f
   Δ = f(y₀) - min_f
   # Exit early if solution escaped ball.
