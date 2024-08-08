@@ -34,3 +34,7 @@ Manifest.toml
 *.pdf
 *.blg
 *.bbl
+
+# Data files
+data/
+plots/*.zip
